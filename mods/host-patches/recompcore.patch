@@ -1,0 +1,1705 @@
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+index 31587ef2dd..55cc87ee41 100644
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@ -25,9 +25,9 @@ jobs:
+       - name: Install dependencies
+         run: brew install ninja
+       - name: Configure
+-        run: cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_QT=OFF -DENABLE_NOGUI=ON -DUSE_MGBA=OFF -DUSE_RETRO_ACHIEVEMENTS=OFF
++        run: cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_QT=OFF -DENABLE_NOGUI=ON -DUSE_MGBA=OFF
+       - name: Build
+-        run: ninja -C build core
++        run: ninja -C build dolphin-emu-nogui
+ 
+   nogui-linux:
+     runs-on: ubuntu-24.04
+@@ -43,9 +43,9 @@ jobs:
+             libbluetooth-dev libasound2-dev libpulse-dev libgl1-mesa-dev \
+             libxrandr-dev libxi-dev
+       - name: Configure
+-        run: cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_QT=OFF -DENABLE_NOGUI=ON -DUSE_MGBA=OFF -DUSE_RETRO_ACHIEVEMENTS=OFF
++        run: cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_QT=OFF -DENABLE_NOGUI=ON -DUSE_MGBA=OFF
+       - name: Build
+-        run: ninja -C build core
++        run: ninja -C build dolphin-emu-nogui
+       # The unit tests exist but nothing ran them. `tests` is EXCLUDE_FROM_ALL,
+       # so it has to be asked for by name.
+       - name: Build unit tests
+@@ -67,9 +67,9 @@ jobs:
+         run: choco install ninja --no-progress -y
+       - uses: ilammy/msvc-dev-cmd@v1
+       - name: Configure
+-        run: cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_QT=OFF -DENABLE_NOGUI=ON -DUSE_MGBA=OFF -DUSE_RETRO_ACHIEVEMENTS=OFF
++        run: cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_QT=OFF -DENABLE_NOGUI=ON -DUSE_MGBA=OFF
+       - name: Build
+-        run: ninja -C build core
++        run: ninja -C build dolphin-emu-nogui
+       - name: Build unit tests
+         run: ninja -C build tests
+       - name: Test
+diff --git a/.gitignore b/.gitignore
+index 1270b78a8a..46c3d828ef 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -54,3 +54,7 @@ CMakeLists.txt.user
+ StrikersRecomp/generated_smc.txt
+ StrikersRecomp/generated.c
+ StrikersRecomp/generated.h
++
++# Python-generated cache files
++__pycache__/
++*.pyc
+diff --git a/CMake/ScmRevGen.cmake b/CMake/ScmRevGen.cmake
+index baa2d0ae41..d2ff767314 100644
+--- a/CMake/ScmRevGen.cmake
++++ b/CMake/ScmRevGen.cmake
+@@ -18,10 +18,32 @@ if(GIT_FOUND)
+   execute_process(WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} COMMAND ${GIT_EXECUTABLE} rev-parse --abbrev-ref HEAD
+       OUTPUT_VARIABLE DOLPHIN_WC_BRANCH
+       OUTPUT_STRIP_TRAILING_WHITESPACE)
+-  # defines DOLPHIN_WC_COMMITS_AHEAD_MASTER
+-  execute_process(WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} COMMAND ${GIT_EXECUTABLE} rev-list --count HEAD ^master
++  # defines DOLPHIN_WC_COMMITS_AHEAD_MASTER. RecompCore uses main, while
++  # upstream Dolphin and older clones may still expose master. Submodule
++  # checkouts are normally detached, so accept the remote-tracking forms too.
++  unset(_dolphin_base_ref)
++  foreach(_candidate master main origin/master origin/main)
++    if(NOT _dolphin_base_ref)
++      execute_process(
++        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
++        COMMAND ${GIT_EXECUTABLE} rev-parse --verify --quiet ${_candidate}
++        RESULT_VARIABLE _candidate_result
++        OUTPUT_QUIET
++        ERROR_QUIET)
++      if(_candidate_result EQUAL 0)
++        set(_dolphin_base_ref ${_candidate})
++      endif()
++    endif()
++  endforeach()
++  if(_dolphin_base_ref)
++    execute_process(
++      WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
++      COMMAND ${GIT_EXECUTABLE} rev-list --count ${_dolphin_base_ref}..HEAD
+       OUTPUT_VARIABLE DOLPHIN_WC_COMMITS_AHEAD_MASTER
+       OUTPUT_STRIP_TRAILING_WHITESPACE)
++  else()
++    set(DOLPHIN_WC_COMMITS_AHEAD_MASTER 0)
++  endif()
+ 
+   # defines DOLPHIN_WC_TAG
+   execute_process(WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} COMMAND ${GIT_EXECUTABLE} describe --exact-match HEAD
+diff --git a/Data/Sys/GameSettings/GC6E01.ini b/Data/Sys/GameSettings/GC6E01.ini
+index b42eac6ccc..8e7a605ede 100644
+--- a/Data/Sys/GameSettings/GC6E01.ini
++++ b/Data/Sys/GameSettings/GC6E01.ini
+@@ -1,5 +1,12 @@
+ # GC6E01 - Pokémon Colosseum
+ 
++[Core]
++# The startup wait loop services callbacks at 0x800D31E0 while polling a
++# four-second timebase deadline. Let CoreTiming advance to the next event at
++# the loop back-edge instead of burning millions of native dispatches.
++StaticRecompIdlePC = 0x800D31E0
++StaticRecompIdleLoopEndPC = 0x800D321C
++
+ [OnFrame]
+ # This game has extra memory card checks compared to most games,
+ # presumably to prevent Pokémon duping. These can interfere with
+diff --git a/GXRuntime/src/dvd.c b/GXRuntime/src/dvd.c
+index a81707358e..ab292e1017 100644
+--- a/GXRuntime/src/dvd.c
++++ b/GXRuntime/src/dvd.c
+@@ -24,6 +24,14 @@ static u32   g_num_entries;  // total entries; equals root entry's "next" field
+ static const char* g_strings;  // string table, inside g_fst
+ static bool  g_ready;
+ 
++static int seek_to(FILE* file, u64 offset) {
++#if defined(_WIN32)
++    return _fseeki64(file, (__int64)offset, SEEK_SET);
++#else
++    return fseeko(file, (off_t)offset, SEEK_SET);
++#endif
++}
++
+ static u32 be32(const u8* p) {
+     return ((u32)p[0] << 24) | ((u32)p[1] << 16) | ((u32)p[2] << 8) | (u32)p[3];
+ }
+@@ -81,7 +89,7 @@ static bool load_from(const char* path) {
+         fclose(f);
+         return false;
+     }
+-    if (fseeko(f, (off_t)fst_off, SEEK_SET) != 0 ||
++    if (seek_to(f, fst_off) != 0 ||
+         fread(fst, 1, fst_size, f) != fst_size) {
+         free(fst);
+         fclose(f);
+@@ -221,7 +229,7 @@ void dvd_read_to_guest(CPUState* cpu, u32 guest_addr, u32 disc_off, u32 length)
+ 
+     if (dst) {
+         size_t got = 0;
+-        if (fseeko(g_iso, (off_t)disc_off, SEEK_SET) == 0)
++        if (seek_to(g_iso, disc_off) == 0)
+             got = fread(dst, 1, length, g_iso);
+         if (got < length)
+             memset(dst + got, 0, length - got);  // zero-fill past image end
+@@ -232,7 +240,7 @@ void dvd_read_to_guest(CPUState* cpu, u32 guest_addr, u32 disc_off, u32 length)
+     // external region (VM window, etc.) is honored. Not expected in practice.
+     for (u32 k = 0; k < length; k++) {
+         u8 b = 0;
+-        if (fseeko(g_iso, (off_t)(disc_off + k), SEEK_SET) == 0)
++        if (seek_to(g_iso, (u64)disc_off + k) == 0)
+             (void)(fread(&b, 1, 1, g_iso) == 1);
+         mem_write8(cpu, guest_addr + k, b);
+     }
+diff --git a/Source/Core/Core/Config/GraphicsSettings.cpp b/Source/Core/Core/Config/GraphicsSettings.cpp
+index fb7f6a872b..0067d2f953 100644
+--- a/Source/Core/Core/Config/GraphicsSettings.cpp
++++ b/Source/Core/Core/Config/GraphicsSettings.cpp
+@@ -19,6 +19,10 @@ const Info<int> GFX_ADAPTER{{System::GFX, "Hardware", "Adapter"}, 0};
+ // Graphics.Settings
+ 
+ const Info<bool> GFX_WIDESCREEN_HACK{{System::GFX, "Settings", "wideScreenHack"}, false};
++const Info<bool> GFX_WIDESCREEN_HUD_SAFE_AREA{
++    {System::GFX, "Settings", "WidescreenHudSafeArea"}, false};
++const Info<float> GFX_WIDESCREEN_HUD_SAFE_AREA_SCALE{
++    {System::GFX, "Settings", "WidescreenHudSafeAreaScale"}, 1.0f};
+ const Info<AspectMode> GFX_ASPECT_RATIO{{System::GFX, "Settings", "AspectRatio"}, AspectMode::Auto};
+ const Info<int> GFX_CUSTOM_ASPECT_RATIO_WIDTH{{System::GFX, "Settings", "CustomAspectRatioWidth"},
+                                               1};
+diff --git a/Source/Core/Core/Config/GraphicsSettings.h b/Source/Core/Core/Config/GraphicsSettings.h
+index 831e04422b..72c134b631 100644
+--- a/Source/Core/Core/Config/GraphicsSettings.h
++++ b/Source/Core/Core/Config/GraphicsSettings.h
+@@ -31,6 +31,8 @@ extern const Info<int> GFX_ADAPTER;
+ // Graphics.Settings
+ 
+ extern const Info<bool> GFX_WIDESCREEN_HACK;
++extern const Info<bool> GFX_WIDESCREEN_HUD_SAFE_AREA;
++extern const Info<float> GFX_WIDESCREEN_HUD_SAFE_AREA_SCALE;
+ extern const Info<AspectMode> GFX_ASPECT_RATIO;
+ extern const Info<int> GFX_CUSTOM_ASPECT_RATIO_WIDTH;
+ extern const Info<int> GFX_CUSTOM_ASPECT_RATIO_HEIGHT;
+diff --git a/Source/Core/Core/Config/StaticRecompSettings.cpp b/Source/Core/Core/Config/StaticRecompSettings.cpp
+index 653deacf58..a092181dc4 100644
+--- a/Source/Core/Core/Config/StaticRecompSettings.cpp
++++ b/Source/Core/Core/Config/StaticRecompSettings.cpp
+@@ -6,6 +6,8 @@ namespace Config
+ {
+ const Info<bool> MAIN_STATICRECOMP_MODULE{{System::Main, "Core", "StaticRecompModule"}, true};
+ const Info<u32> MAIN_STATICRECOMP_IDLE_PC{{System::Main, "Core", "StaticRecompIdlePC"}, 0};
++const Info<u32> MAIN_STATICRECOMP_IDLE_LOOP_END_PC{
++    {System::Main, "Core", "StaticRecompIdleLoopEndPC"}, 0};
+ const Info<std::string> MAIN_STATICRECOMP_FALLBACK_RANGES{
+     {System::Main, "Core", "StaticRecompFallbackRanges"}, ""};
+ }  // namespace Config
+diff --git a/Source/Core/Core/Config/StaticRecompSettings.h b/Source/Core/Core/Config/StaticRecompSettings.h
+index fbfccca111..3f132f8899 100644
+--- a/Source/Core/Core/Config/StaticRecompSettings.h
++++ b/Source/Core/Core/Config/StaticRecompSettings.h
+@@ -7,5 +7,6 @@ namespace Config
+ {
+ extern const Info<bool> MAIN_STATICRECOMP_MODULE;
+ extern const Info<u32> MAIN_STATICRECOMP_IDLE_PC;
++extern const Info<u32> MAIN_STATICRECOMP_IDLE_LOOP_END_PC;
+ extern const Info<std::string> MAIN_STATICRECOMP_FALLBACK_RANGES;
+ }  // namespace Config
+diff --git a/Source/Core/Core/IOS/FS/HostBackend/FS.cpp b/Source/Core/Core/IOS/FS/HostBackend/FS.cpp
+index 4ef859f29e..baff8c247d 100644
+--- a/Source/Core/Core/IOS/FS/HostBackend/FS.cpp
++++ b/Source/Core/Core/IOS/FS/HostBackend/FS.cpp
+@@ -227,7 +227,7 @@ void HostFileSystem::SaveFst()
+       return;
+     }
+   }
+-  if (!File::Rename(temp_path, dest_path))
++  if (!File::MoveWithOverwrite(temp_path, dest_path))
+     PanicAlertFmt("IOS_FS: Failed to rename temporary FST file");
+ }
+ 
+diff --git a/Source/Core/Core/PowerPC/Interpreter/Interpreter.cpp b/Source/Core/Core/PowerPC/Interpreter/Interpreter.cpp
+index 2fa8cde1dc..325d5f411b 100644
+--- a/Source/Core/Core/PowerPC/Interpreter/Interpreter.cpp
++++ b/Source/Core/Core/PowerPC/Interpreter/Interpreter.cpp
+@@ -289,6 +289,13 @@ void Interpreter::unknown_instruction(Interpreter& interpreter, UGeckoInstructio
+ {
+   ASSERT(Core::IsCPUThread());
+   auto& ppc_state = interpreter.m_ppc_state;
++  if (inst.hex == 0 && g_static_recomp_core &&
++      g_static_recomp_core->TryRecoverZeroCallback(ppc_state))
++  {
++    interpreter.m_end_block = true;
++    return;
++  }
++
+   auto& system = interpreter.m_system;
+   Core::CPUThreadGuard guard(system);
+ 
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
+index e3581cc938..d6d8cb392a 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
+@@ -16,6 +16,7 @@
+ #include "Core/Config/MainSettings.h"
+ #include "Core/Config/StaticRecompSettings.h"
+ #include "Core/Config/ConfigManager.h"
++#include "Core/PowerPC/PowerPC.h"
+ #include "Core/PowerPC/StaticRecomp/StaticRecompLockstep.h"
+ #include "Core/System.h"
+ 
+@@ -136,6 +137,27 @@ bool StaticRecompCore::ShouldYieldAt(u32 address)
+   return IsHostCallAddress(address);
+ }
+ 
++bool StaticRecompCore::TryRecoverZeroCallback(PowerPC::PowerPCState& ppc)
++{
++  if (!m_module_active || ChunkIndexOf(ppc.pc) >= 0)
++    return false;
++
++  const u32 return_address = LR(ppc) & ~3u;
++  const int return_chunk = ChunkIndexOf(return_address);
++  if (return_chunk < 0)
++    return false;
++
++  ++m_recovered_zero_callbacks;
++  std::fprintf(stderr,
++               "[staticrecomp] recovered zeroed dynamic callback pc=0x%08x lr=0x%08x "
++               "return_chunk=%d ctr=0x%08x r31=0x%08x\n",
++               ppc.pc, return_address, return_chunk, ppc.spr[SPR_CTR], ppc.gpr[31]);
++  std::fflush(stderr);
++  ppc.pc = return_address;
++  ppc.npc = return_address + 4u;
++  return true;
++}
++
+ StaticRecompCore::StaticRecompCore(Core::System& system, StaticRecompModuleSource module_source)
+     : JitBase(system), m_module_source(std::move(module_source))
+ {
+@@ -182,6 +204,13 @@ void StaticRecompCore::Init()
+ 
+   LoadModule();
+   m_idle_pc = Config::Get(Config::MAIN_STATICRECOMP_IDLE_PC);
++  m_idle_loop_end_pc = Config::Get(Config::MAIN_STATICRECOMP_IDLE_LOOP_END_PC);
++  if (m_idle_pc != 0)
++  {
++    std::fprintf(stderr, "[staticrecomp] idle loop: [0x%08x,0x%08x)\n", m_idle_pc,
++                 m_idle_loop_end_pc);
++    std::fflush(stderr);
++  }
+   m_lockstep_verifier = std::make_unique<StaticRecompLockstep::StaticRecompLockstepVerifier>(*this);
+   m_lockstep_verifier->Init();
+ 
+@@ -203,10 +232,12 @@ void StaticRecompCore::Shutdown()
+   g_static_recomp_core = nullptr;
+   std::fprintf(stderr,
+                "[staticrecomp] shutdown: native=%llu fallback=%llu native_exc=%llu hook_fb=%llu "
+-               "smc_failed=%u verifications=%llu reverify_events=%llu bursts=%llu cycles=%llu\n",
++               "zero_cb=%llu smc_failed=%u verifications=%llu reverify_events=%llu bursts=%llu "
++               "cycles=%llu\n",
+                (unsigned long long)m_native_dispatches, (unsigned long long)m_fallback_steps,
+                (unsigned long long)m_native_exceptions,
+-               (unsigned long long)m_hook_fallback_instructions, m_failed_chunks,
++               (unsigned long long)m_hook_fallback_instructions,
++               (unsigned long long)m_recovered_zero_callbacks, m_failed_chunks,
+                (unsigned long long)m_verifications, (unsigned long long)m_reverify_events,
+                (unsigned long long)m_bursts, (unsigned long long)m_charged_cycles);
+   std::vector<std::pair<u32, u64>> dispatch_samples(m_dispatch_samples.begin(),
+@@ -221,11 +252,11 @@ void StaticRecompCore::Shutdown()
+   }
+   NOTICE_LOG_FMT(POWERPC,
+                  "StaticRecomp: shutdown. native_dispatches={} fallback_steps={} "
+-                 "native_exceptions={} hook_fallback_instructions={} smc_failed_chunks={} "
+-                 "verifications={} reverify_events={}",
++                 "native_exceptions={} hook_fallback_instructions={} recovered_zero_callbacks={} "
++                 "smc_failed_chunks={} verifications={} reverify_events={}",
+                  m_native_dispatches, m_fallback_steps, m_native_exceptions,
+-                 m_hook_fallback_instructions, m_failed_chunks, m_verifications,
+-                 m_reverify_events);
++                 m_hook_fallback_instructions, m_recovered_zero_callbacks, m_failed_chunks,
++                 m_verifications, m_reverify_events);
+   m_lockstep_verifier.reset();
+   m_block_cache.Shutdown();
+   m_module = nullptr;
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
+index 44d027bef7..2456a47d50 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
+@@ -55,6 +55,7 @@ public:
+   bool FastDispatchableAt(u32 address);
+   bool IsHostCallAddress(u32 address) const;
+   bool ShouldYieldAt(u32 address);
++  bool TryRecoverZeroCallback(PowerPC::PowerPCState& ppc);
+ 
+   void ClearCache() override;
+   void Jit(u32 em_address) override {}
+@@ -162,7 +163,9 @@ private:
+   u64 m_fallback_steps = 0;
+   u64 m_native_exceptions = 0;
+   u64 m_hook_fallback_instructions = 0;
++  u64 m_recovered_zero_callbacks = 0;
+   u64 m_timebase_cycle_remainder = 0;
++  u64 m_idle_hits = 0;
+   std::unordered_map<u32, u64> m_dispatch_samples;
+   u64 m_bursts = 0;          // SyncIn..SyncOut native runs (diagnostic)
+   u64 m_charged_cycles = 0;  // cycles flushed from module charges (diagnostic)
+@@ -201,6 +204,7 @@ private:
+   bool m_collect_dispatch_samples = false;
+   bool m_has_rel_modules = false;
+   u32 m_idle_pc = 0;
++  u32 m_idle_loop_end_pc = 0;
+ };
+ 
+ extern StaticRecompCore* g_static_recomp_core;
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
+index 71a21c5baa..8b03185e94 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
+@@ -44,7 +44,8 @@ FilePtr OpenDispatchTrace()
+   FilePtr file(std::fopen(path, "w"));
+   if (file)
+   {
+-    std::fprintf(file.get(), "dispatch,pc,lr,ctr,cr,timebase,ppc_downcount\n");
++    std::fprintf(file.get(),
++                 "event,dispatch,pc,lr,r0,r3,r13,r29,r30,timebase,ppc_downcount\n");
+     std::fflush(file.get());
+   }
+   return file;
+@@ -114,11 +115,16 @@ void StaticRecompCore::Run()
+         ++m_bursts;
+         do
+         {
+-          if (dispatch_trace && (m_native_dispatches & 0xFFFFFu) == 0)
++          const bool trace_sample = (m_native_dispatches & 0xFFFFFu) == 0;
++          const bool trace_wait_entry = m_guest.pc == 0x800d3190u;
++          if (dispatch_trace && (trace_sample || trace_wait_entry))
+           {
+-            std::fprintf(dispatch_trace.get(), "%llu,%08x,%08x,%08x,%08x,%llu,%d\n",
++            std::fprintf(dispatch_trace.get(),
++                         "%s,%llu,%08x,%08x,%08x,%08x,%08x,%08x,%08x,%llu,%d\n",
++                         trace_wait_entry ? "wait-entry" : "sample",
+                          static_cast<unsigned long long>(m_native_dispatches), m_guest.pc,
+-                         m_guest.lr, m_guest.ctr, m_guest.cr,
++                         m_guest.lr, m_guest.gpr[0], m_guest.gpr[3], m_guest.gpr[13],
++                         m_guest.gpr[29], m_guest.gpr[30],
+                          static_cast<unsigned long long>(m_guest.timebase), ppc.downcount);
+             std::fflush(dispatch_trace.get());
+           }
+@@ -157,13 +163,29 @@ void StaticRecompCore::Run()
+           const u64 effective_charge = static_cast<u64>(charge > 0 ? charge : 1);
+           ppc.downcount -= static_cast<int>(effective_charge);
+           m_charged_cycles += effective_charge;
+-          const u64 total_cycles = m_timebase_cycle_remainder + effective_charge;
+-          m_guest.timebase += total_cycles / SystemTimers::TIMER_RATIO;
+-          m_timebase_cycle_remainder = total_cycles % SystemTimers::TIMER_RATIO;
++          AdvanceGuestTimebase(effective_charge);
+ 
+-          // Idle loop skipping for configured target loops (e.g. Wii Menu OSIdleThread)
+-          if (m_guest.pc == m_idle_pc && m_idle_pc != 0)
++          // Yield only after execution has resumed inside the configured loop
++          // body and branched back to its start. Initial arrival at idle_pc
++          // still runs every callback pump once, while resume points after any
++          // nested callback can skip the completed wait iteration.
++          const bool completed_idle_loop =
++              m_idle_pc != 0 && m_idle_loop_end_pc > m_idle_pc &&
++              runtime_dispatch_address > m_idle_pc &&
++              runtime_dispatch_address < m_idle_loop_end_pc && m_guest.pc == m_idle_pc;
++          if (completed_idle_loop)
+           {
++            ++m_idle_hits;
++            if (dispatch_trace && (m_idle_hits & (m_idle_hits - 1)) == 0)
++            {
++              std::fprintf(dispatch_trace.get(),
++                           "idle,%llu,%08x,%08x,%08x,%08x,%08x,%08x,%08x,%llu,%d\n",
++                           static_cast<unsigned long long>(m_native_dispatches), m_guest.pc,
++                           m_guest.lr, m_guest.gpr[0], m_guest.gpr[3], m_guest.gpr[13],
++                           m_guest.gpr[29], m_guest.gpr[30],
++                           static_cast<unsigned long long>(m_guest.timebase), ppc.downcount);
++              std::fflush(dispatch_trace.get());
++            }
+             m_system.GetCoreTiming().Idle();
+           }
+ 
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Sync.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Sync.cpp
+index e8d0287008..aa9387dedb 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Sync.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Sync.cpp
+@@ -8,6 +8,12 @@
+ #include "Core/PowerPC/StaticRecomp/StaticRecompCore.h"
+ #include "Core/System.h"
+ 
++#include "Core/CoreTiming.h"
++#include "Core/HW/SystemTimers.h"
++#include "Core/PowerPC/PowerPC.h"
++#include "Core/PowerPC/StaticRecomp/StaticRecompCore.h"
++#include "Core/System.h"
++
+ void StaticRecompCore::SetPPCStateFromGuestState(const CPUState& s, PowerPC::PowerPCState& ppc)
+ {
+   std::memcpy(ppc.gpr, s.gpr, sizeof(ppc.gpr));
+diff --git a/Source/Core/DolphinNoGUI/PlatformWin32.cpp b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
+index 3402fdae95..2bd815f2dd 100644
+--- a/Source/Core/DolphinNoGUI/PlatformWin32.cpp
++++ b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
+@@ -28,6 +28,32 @@
+ #include "VideoCommon/Present.h"
+ #include "resource.h"
+ 
++void Host_RequestGameReset();
++bool Host_IsNavigationWidescreenEnabled();
++void Host_ToggleNavigationWidescreen();
++bool Host_IsNavigationOverlayVisible();
++void Host_ToggleNavigationOverlay();
++int Host_GetUltrawideEfbScale();
++void Host_SetUltrawideEfbScale(int scale);
++void Host_RequestNavigationMapFit();
++bool Host_IsTextUpscaleEnabled();
++void Host_ToggleTextUpscale();
++bool Host_IsHighResolutionTexturesEnabled();
++void Host_ToggleHighResolutionTextures();
++bool Host_IsTextureDumpingEnabled();
++void Host_ToggleTextureDumping();
++bool Host_IsInputOverlayEnabled();
++void Host_ToggleInputOverlay();
++bool Host_IsMinimapHighContrastEnabled();
++void Host_ToggleMinimapHighContrast();
++bool Host_IsFastForwardEnabled();
++void Host_ToggleFastForwardEnabled();
++void Host_SetFastForwardActive(bool active);
++bool Host_IsSixtyFpsEnabled();
++void Host_ToggleSixtyFps();
++bool Host_IsAutosaveEnabled();
++void Host_ToggleAutosave();
++
+ namespace
+ {
+ // Menu command ids. Load State entries are allocated a contiguous range,
+@@ -36,12 +62,23 @@ constexpr UINT ID_SAVE_STATE = 41001;
+ constexpr UINT ID_PAUSE = 41002;
+ constexpr UINT ID_MUTE = 41003;
+ constexpr UINT ID_FULLSCREEN = 41004;
++constexpr UINT ID_NAV_TOGGLE_MAP = 41005;
++constexpr UINT ID_NAV_FIT_MAP = 41006;
++constexpr UINT ID_NAV_WIDESCREEN = 41007;
++constexpr UINT ID_NAV_RESTART = 41009;
++constexpr UINT ID_NAV_ULTRAWIDE_SCALE_3X = 41013;
++constexpr UINT ID_NAV_ULTRAWIDE_SCALE_4X = 41014;
++constexpr UINT ID_NAV_ULTRAWIDE_SCALE_5X = 41015;
++constexpr UINT ID_NAV_ULTRAWIDE_SCALE_6X = 41016;
++constexpr UINT ID_NAV_TEXT_UPSCALE = 41017;
++constexpr UINT ID_NAV_INPUT_OVERLAY = 41020;
++constexpr UINT ID_NAV_MINIMAP_HIGH_CONTRAST = 41021;
++constexpr UINT ID_NAV_FAST_FORWARD = 41022;
++constexpr UINT ID_NAV_AUTOSAVE = 41023;
++constexpr UINT ID_NAV_SIXTY_FPS = 41024;
+ constexpr UINT ID_LOAD_STATE_FIRST = 41100;
+ constexpr UINT ID_LOAD_STATE_LAST = 41199;
+ 
+-// Hold-to-fast-forward target. 2x is fast enough to skip a cutscene without
+-// outrunning what most hosts can actually emulate.
+-constexpr float FAST_FORWARD_SPEED = 2.0f;
+ 
+ class PlatformWin32 final : public Platform
+ {
+@@ -65,6 +102,7 @@ private:
+   void RefreshMenu(HMENU menu);
+   void SaveStateToStatesDirectory();
+   void ToggleFullscreen();
++  void SetFullscreen(bool fullscreen);
+   void UpdateWindowPosition();
+   void ProcessEvents();
+ 
+@@ -73,13 +111,14 @@ private:
+   HMENU m_file_menu{};
+   HMENU m_load_menu{};
+   HMENU m_view_menu{};
++  HMENU m_ultrawide_quality_menu{};
+   // Parallel to the Load State menu entries, rebuilt whenever it opens.
+   std::vector<std::string> m_load_state_paths;
+   std::time_t m_last_save_time{};
+   std::size_t m_save_sequence{};
+-  bool m_fullscreen = false;
+-  LONG m_windowed_style = 0;
+-  RECT m_windowed_rect{};
++  WINDOWPLACEMENT m_windowed_placement{sizeof(WINDOWPLACEMENT)};
++  LONG_PTR m_windowed_style = WS_OVERLAPPEDWINDOW;
++  LONG_PTR m_windowed_ex_style = WS_EX_CLIENTEDGE;
+ 
+   int m_window_x = Config::Get(Config::MAIN_RENDER_WINDOW_XPOS);
+   int m_window_y = Config::Get(Config::MAIN_RENDER_WINDOW_YPOS);
+@@ -141,19 +180,51 @@ bool PlatformWin32::CreateMenus()
+   m_file_menu = CreatePopupMenu();
+   m_load_menu = CreatePopupMenu();
+   m_view_menu = CreatePopupMenu();
+-  if (!m_menu || !m_file_menu || !m_load_menu || !m_view_menu)
++  m_ultrawide_quality_menu = CreatePopupMenu();
++  if (!m_menu || !m_file_menu || !m_load_menu || !m_view_menu ||
++      !m_ultrawide_quality_menu)
+     return false;
+ 
+   AppendMenuW(m_file_menu, MF_STRING, ID_SAVE_STATE, L"&Save State\tF1");
+   AppendMenuW(m_file_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(m_load_menu), L"&Load State");
+   AppendMenuW(m_file_menu, MF_SEPARATOR, 0, nullptr);
++  AppendMenuW(m_file_menu, MF_STRING, ID_NAV_RESTART, L"&Restart Game");
++  AppendMenuW(m_file_menu, MF_SEPARATOR, 0, nullptr);
+   // Checked state is refreshed from the core when the menu opens, so it cannot
+   // drift out of step with an emulation that was paused some other way.
+   AppendMenuW(m_file_menu, MF_STRING, ID_PAUSE, L"&Pause");
++  AppendMenuW(m_file_menu, MF_STRING, ID_NAV_AUTOSAVE, L"Rotating &Autosaves");
+ 
+   AppendMenuW(m_view_menu, MF_STRING, ID_FULLSCREEN, L"&Fullscreen\tAlt+Enter");
+   AppendMenuW(m_view_menu, MF_STRING, ID_MUTE, L"&Mute Audio");
+-
++  AppendMenuW(m_view_menu, MF_SEPARATOR, 0, nullptr);
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_TOGGLE_MAP, L"&Show Navigation Map");
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_FIT_MAP, L"&Fit Map Bounds");
++  AppendMenuW(m_view_menu, MF_SEPARATOR, 0, nullptr);
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_WIDESCREEN, L"Native &Ultrawide");
++  AppendMenuW(m_ultrawide_quality_menu, MF_STRING,
++              ID_NAV_ULTRAWIDE_SCALE_3X, L"3x Performance");
++  AppendMenuW(m_ultrawide_quality_menu, MF_STRING,
++              ID_NAV_ULTRAWIDE_SCALE_4X, L"4x Balanced");
++  AppendMenuW(m_ultrawide_quality_menu, MF_STRING,
++              ID_NAV_ULTRAWIDE_SCALE_5X, L"5x Quality");
++  AppendMenuW(m_ultrawide_quality_menu, MF_STRING,
++              ID_NAV_ULTRAWIDE_SCALE_6X, L"6x Ultra");
++  AppendMenuW(m_view_menu, MF_POPUP,
++              reinterpret_cast<UINT_PTR>(m_ultrawide_quality_menu),
++              L"Ultrawide Render &Quality");
++  AppendMenuW(m_view_menu, MF_SEPARATOR, 0, nullptr);
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_TEXT_UPSCALE,
++              L"High-Resolution &Text");
++  AppendMenuW(m_view_menu, MF_SEPARATOR, 0, nullptr);
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_INPUT_OVERLAY,
++              L"Controller &Input Overlay");
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_MINIMAP_HIGH_CONTRAST,
++              L"High-Contrast &Minimap");
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_SIXTY_FPS,
++              L"60 &FPS Gameplay Patch (Relaunch Required)");
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_FAST_FORWARD,
++              L"Hold Space to &Fast-Forward");
+   AppendMenuW(m_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(m_file_menu), L"&File");
+   AppendMenuW(m_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(m_view_menu), L"&View");
+   return SetMenu(m_hwnd, m_menu) != FALSE;
+@@ -168,6 +239,9 @@ void PlatformWin32::RefreshMenu(const HMENU menu)
+     auto& system = Core::System::GetInstance();
+     const bool paused = Core::GetState(system) == Core::State::Paused;
+     CheckMenuItem(m_file_menu, ID_PAUSE, MF_BYCOMMAND | (paused ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_file_menu, ID_NAV_AUTOSAVE,
++                  MF_BYCOMMAND |
++                      (Host_IsAutosaveEnabled() ? MF_CHECKED : MF_UNCHECKED));
+     return;
+   }
+ 
+@@ -176,8 +250,55 @@ void PlatformWin32::RefreshMenu(const HMENU menu)
+     CheckMenuItem(m_view_menu, ID_MUTE,
+                   MF_BYCOMMAND |
+                       (Config::Get(Config::MAIN_AUDIO_MUTED) ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_TOGGLE_MAP,
++                  MF_BYCOMMAND |
++                      (Host_IsNavigationOverlayVisible() ? MF_CHECKED :
++                                                           MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_WIDESCREEN,
++                  MF_BYCOMMAND |
++                      (Host_IsNavigationWidescreenEnabled() ? MF_CHECKED : MF_UNCHECKED));
+     CheckMenuItem(m_view_menu, ID_FULLSCREEN,
+-                  MF_BYCOMMAND | (m_fullscreen ? MF_CHECKED : MF_UNCHECKED));
++                  MF_BYCOMMAND | (m_window_fullscreen ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_TEXT_UPSCALE,
++                  MF_BYCOMMAND |
++                      (Host_IsTextUpscaleEnabled() ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_INPUT_OVERLAY,
++                  MF_BYCOMMAND |
++                      (Host_IsInputOverlayEnabled() ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_MINIMAP_HIGH_CONTRAST,
++                  MF_BYCOMMAND |
++                      (Host_IsMinimapHighContrastEnabled() ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_FAST_FORWARD,
++                  MF_BYCOMMAND |
++                      (Host_IsFastForwardEnabled() ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_SIXTY_FPS,
++                  MF_BYCOMMAND |
++                      (Host_IsSixtyFpsEnabled() ? MF_CHECKED : MF_UNCHECKED));
++    return;
++  }
++  if (menu == m_ultrawide_quality_menu)
++  {
++    UINT selected = ID_NAV_ULTRAWIDE_SCALE_5X;
++    switch (Host_GetUltrawideEfbScale())
++    {
++    case 3:
++      selected = ID_NAV_ULTRAWIDE_SCALE_3X;
++      break;
++    case 4:
++      selected = ID_NAV_ULTRAWIDE_SCALE_4X;
++      break;
++    case 5:
++      selected = ID_NAV_ULTRAWIDE_SCALE_5X;
++      break;
++    case 6:
++      selected = ID_NAV_ULTRAWIDE_SCALE_6X;
++      break;
++    default:
++      break;
++    }
++    CheckMenuRadioItem(m_ultrawide_quality_menu,
++                       ID_NAV_ULTRAWIDE_SCALE_3X,
++                       ID_NAV_ULTRAWIDE_SCALE_6X, selected, MF_BYCOMMAND);
+     return;
+   }
+ 
+@@ -231,45 +352,67 @@ void PlatformWin32::SaveStateToStatesDirectory()
+ 
+ void PlatformWin32::ToggleFullscreen()
+ {
+-  if (!m_fullscreen)
+-  {
+-    GetWindowRect(m_hwnd, &m_windowed_rect);
+-    m_windowed_style = GetWindowLong(m_hwnd, GWL_STYLE);
++  SetFullscreen(!m_window_fullscreen);
++}
+ 
+-    MONITORINFO monitor{};
+-    monitor.cbSize = sizeof(monitor);
+-    if (!GetMonitorInfo(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &monitor))
++void PlatformWin32::SetFullscreen(bool fullscreen)
++{
++  if (!m_hwnd || fullscreen == m_window_fullscreen)
++    return;
++
++  if (fullscreen)
++  {
++    m_windowed_style = GetWindowLongPtr(m_hwnd, GWL_STYLE);
++    m_windowed_ex_style = GetWindowLongPtr(m_hwnd, GWL_EXSTYLE);
++    m_windowed_placement.length = sizeof(WINDOWPLACEMENT);
++    GetWindowPlacement(m_hwnd, &m_windowed_placement);
++
++    const HMONITOR monitor = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
++    MONITORINFO monitor_info{sizeof(MONITORINFO)};
++    if (!GetMonitorInfo(monitor, &monitor_info))
+       return;
+ 
+     SetMenu(m_hwnd, nullptr);
+-    SetWindowLong(m_hwnd, GWL_STYLE, m_windowed_style & ~WS_OVERLAPPEDWINDOW);
+-    SetWindowPos(m_hwnd, HWND_TOP, monitor.rcMonitor.left, monitor.rcMonitor.top,
+-                 monitor.rcMonitor.right - monitor.rcMonitor.left,
+-                 monitor.rcMonitor.bottom - monitor.rcMonitor.top,
+-                 SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+-    m_fullscreen = true;
+-    return;
++    SetWindowLongPtr(m_hwnd, GWL_STYLE,
++                     m_windowed_style & ~static_cast<LONG_PTR>(WS_OVERLAPPEDWINDOW));
++    SetWindowLongPtr(m_hwnd, GWL_EXSTYLE,
++                     m_windowed_ex_style & ~static_cast<LONG_PTR>(WS_EX_CLIENTEDGE));
++    const RECT& bounds = monitor_info.rcMonitor;
++    SetWindowPos(m_hwnd, HWND_TOP, bounds.left, bounds.top,
++                 bounds.right - bounds.left, bounds.bottom - bounds.top,
++                 SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
++    m_window_fullscreen = true;
++  }
++  else
++  {
++    SetWindowLongPtr(m_hwnd, GWL_STYLE, m_windowed_style);
++    SetWindowLongPtr(m_hwnd, GWL_EXSTYLE, m_windowed_ex_style);
++    SetMenu(m_hwnd, m_menu);
++    SetWindowPlacement(m_hwnd, &m_windowed_placement);
++    SetWindowPos(m_hwnd, nullptr, 0, 0, 0, 0,
++                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE |
++                     SWP_NOZORDER | SWP_NOOWNERZORDER);
++    m_window_fullscreen = false;
+   }
+ 
+-  SetWindowLong(m_hwnd, GWL_STYLE, m_windowed_style);
+-  SetMenu(m_hwnd, m_menu);
+-  SetWindowPos(m_hwnd, nullptr, m_windowed_rect.left, m_windowed_rect.top,
+-               m_windowed_rect.right - m_windowed_rect.left,
+-               m_windowed_rect.bottom - m_windowed_rect.top,
+-               SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOZORDER);
+-  m_fullscreen = false;
++  Config::SetCurrent(Config::MAIN_FULLSCREEN, fullscreen);
++  DrawMenuBar(m_hwnd);
++  if (g_presenter)
++    g_presenter->ResizeSurface();
+ }
+ 
+ bool PlatformWin32::Init()
+ {
++  // Keep the HWND client area, Vulkan swapchain, ImGui overlay, and mouse
++  // coordinates on the same physical-pixel grid on scaled ultrawide displays.
++  SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
++  SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
++
+   if (!RegisterRenderWindowClass() || !CreateRenderWindow() || !CreateMenus())
+     return false;
+ 
+-  // TODO: Enter fullscreen if enabled.
+   if (Config::Get(Config::MAIN_FULLSCREEN))
+-  {
+-    ProcessEvents();
+-  }
++    SetFullscreen(true);
+ 
+   if (Config::Get(Config::MAIN_DISABLE_SCREENSAVER))
+     SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
+@@ -364,16 +507,16 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
+   break;
+ 
+   case WM_KEYDOWN:
+-    // Bit 30 of lParam is the previous key state: ignore auto-repeat, or holding
+-    // F1 down would write a state every few milliseconds.
++    // Bit 30 is the previous key state. Ignore auto-repeat so holding F1 cannot
++    // queue a new savestate every few milliseconds.
+     if (wParam == VK_F1 && (static_cast<ULONG_PTR>(lParam) & (1u << 30)) == 0)
+     {
+       platform->SaveStateToStatesDirectory();
+       return 0;
+     }
+-    else if (wParam == VK_SPACE)
++    else if (wParam == VK_SPACE && Host_IsFastForwardEnabled())
+     {
+-      Config::SetCurrent(Config::MAIN_EMULATION_SPEED, FAST_FORWARD_SPEED);
++      Host_SetFastForwardActive(true);
+       return 0;
+     }
+     else if (wParam == VK_F11)
+@@ -381,9 +524,9 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
+       platform->ToggleFullscreen();
+       return 0;
+     }
+-    else if (wParam == VK_ESCAPE && platform->m_fullscreen)
++    else if (wParam == VK_ESCAPE && platform->m_window_fullscreen)
+     {
+-      platform->ToggleFullscreen();
++      platform->SetFullscreen(false);
+       return 0;
+     }
+     else if (wParam == VK_ESCAPE)
+@@ -395,15 +538,14 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
+   case WM_KEYUP:
+     if (wParam == VK_SPACE)
+     {
+-      Config::SetCurrent(Config::MAIN_EMULATION_SPEED, 1.0f);
++      Host_SetFastForwardActive(false);
+       return 0;
+     }
+     break;
+ 
+   case WM_KILLFOCUS:
+-    // Never leave emulation running fast because Space was released while
+-    // another window had focus and the key-up went elsewhere.
+-    Config::SetCurrent(Config::MAIN_EMULATION_SPEED, 1.0f);
++    // Never leave emulation sped up if Space is released while another window has focus.
++    Host_SetFastForwardActive(false);
+     break;
+ 
+   case WM_SYSKEYDOWN:
+@@ -442,6 +584,44 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
+     {
+       platform->ToggleFullscreen();
+     }
++    else if (command == ID_NAV_RESTART)
++    {
++      Host_RequestGameReset();
++    }
++    else if (command == ID_NAV_AUTOSAVE)
++    {
++      Host_ToggleAutosave();
++    }
++    else if (command == ID_NAV_TOGGLE_MAP)
++    {
++      Host_ToggleNavigationOverlay();
++    }
++    else if (command == ID_NAV_WIDESCREEN)
++    {
++      Host_ToggleNavigationWidescreen();
++    }
++    else if (command == ID_NAV_ULTRAWIDE_SCALE_3X)
++      Host_SetUltrawideEfbScale(3);
++    else if (command == ID_NAV_ULTRAWIDE_SCALE_4X)
++      Host_SetUltrawideEfbScale(4);
++    else if (command == ID_NAV_ULTRAWIDE_SCALE_5X)
++      Host_SetUltrawideEfbScale(5);
++    else if (command == ID_NAV_ULTRAWIDE_SCALE_6X)
++      Host_SetUltrawideEfbScale(6);
++    else if (command == ID_NAV_TEXT_UPSCALE)
++      Host_ToggleTextUpscale();
++    else if (command == ID_NAV_INPUT_OVERLAY)
++      Host_ToggleInputOverlay();
++    else if (command == ID_NAV_MINIMAP_HIGH_CONTRAST)
++      Host_ToggleMinimapHighContrast();
++    else if (command == ID_NAV_FAST_FORWARD)
++      Host_ToggleFastForwardEnabled();
++    else if (command == ID_NAV_SIXTY_FPS)
++      Host_ToggleSixtyFps();
++    else if (command == ID_NAV_FIT_MAP)
++    {
++      Host_RequestNavigationMapFit();
++    }
+     else if (command >= ID_LOAD_STATE_FIRST && command <= ID_LOAD_STATE_LAST)
+     {
+       const std::size_t index = command - ID_LOAD_STATE_FIRST;
+diff --git a/Source/Core/InputCommon/CMakeLists.txt b/Source/Core/InputCommon/CMakeLists.txt
+index ddf8c30cf4..b6b715734a 100644
+--- a/Source/Core/InputCommon/CMakeLists.txt
++++ b/Source/Core/InputCommon/CMakeLists.txt
+@@ -62,6 +62,8 @@ add_library(inputcommon
+   ControllerInterface/InputBackend.h
+   ControllerInterface/MappingCommon.cpp
+   ControllerInterface/MappingCommon.h
++  ControllerInterface/Touch/InputOverrider.cpp
++  ControllerInterface/Touch/InputOverrider.h
+   ControllerInterface/Wiimote/WiimoteController.cpp
+   ControllerInterface/Wiimote/WiimoteController.h
+   ControlReference/ControlReference.cpp
+@@ -141,8 +143,6 @@ elseif(ANDROID)
+   target_sources(inputcommon PRIVATE
+     ControllerInterface/Android/Android.cpp
+     ControllerInterface/Android/Android.h
+-    ControllerInterface/Touch/InputOverrider.cpp
+-    ControllerInterface/Touch/InputOverrider.h
+   )
+   target_link_libraries(inputcommon PRIVATE
+     androidcommon
+diff --git a/Source/Core/VideoCommon/AbstractGfx.cpp b/Source/Core/VideoCommon/AbstractGfx.cpp
+index 851dc485fd..5184e4a497 100644
+--- a/Source/Core/VideoCommon/AbstractGfx.cpp
++++ b/Source/Core/VideoCommon/AbstractGfx.cpp
+@@ -147,6 +147,52 @@ void AbstractGfx::ScaleTexture(AbstractFramebuffer* dst_framebuffer,
+     dst_framebuffer->GetColorAttachment()->FinishedRendering();
+ }
+ 
++void AbstractGfx::SharpenAndScaleTextTexture(AbstractFramebuffer* dst_framebuffer,
++                                             const MathUtil::Rectangle<int>& dst_rect,
++                                             const AbstractTexture* src_texture,
++                                             const MathUtil::Rectangle<int>& src_rect,
++                                             bool preserve_color)
++{
++  if (g_backend_info.api_type == APIType::Nothing)
++  {
++    ScaleTexture(dst_framebuffer, dst_rect, src_texture, src_rect);
++    return;
++  }
++
++  ASSERT(dst_framebuffer->GetColorFormat() == AbstractTextureFormat::RGBA8);
++  BeginUtilityDrawing();
++
++  const auto converted_src_rect =
++      ConvertFramebufferRectangle(src_rect, src_texture->GetWidth(), src_texture->GetHeight());
++  const float rcp_src_width = 1.0f / src_texture->GetWidth();
++  const float rcp_src_height = 1.0f / src_texture->GetHeight();
++  const std::array<float, 4> uniforms = {{converted_src_rect.left * rcp_src_width,
++                                          converted_src_rect.top * rcp_src_height,
++                                          converted_src_rect.GetWidth() * rcp_src_width,
++                                          converted_src_rect.GetHeight() * rcp_src_height}};
++  g_vertex_manager->UploadUtilityUniforms(&uniforms, sizeof(uniforms));
++
++  if (static_cast<u32>(dst_rect.GetWidth()) == dst_framebuffer->GetWidth() &&
++      static_cast<u32>(dst_rect.GetHeight()) == dst_framebuffer->GetHeight())
++  {
++    SetAndDiscardFramebuffer(dst_framebuffer);
++  }
++  else
++  {
++    SetFramebuffer(dst_framebuffer);
++  }
++
++  SetViewportAndScissor(ConvertFramebufferRectangle(dst_rect, dst_framebuffer));
++  SetPipeline(preserve_color ? g_shader_cache->GetRGBA8ColorTextSharpenPipeline() :
++                               g_shader_cache->GetRGBA8TextSharpenPipeline());
++  SetTexture(0, src_texture);
++  SetSamplerState(0, RenderState::GetLinearSamplerState());
++  Draw(0, 3);
++  EndUtilityDrawing();
++  if (dst_framebuffer->GetColorAttachment())
++    dst_framebuffer->GetColorAttachment()->FinishedRendering();
++}
++
+ MathUtil::Rectangle<int>
+ AbstractGfx::ConvertFramebufferRectangle(const MathUtil::Rectangle<int>& rect,
+                                          const AbstractFramebuffer* framebuffer) const
+diff --git a/Source/Core/VideoCommon/AbstractGfx.h b/Source/Core/VideoCommon/AbstractGfx.h
+index 3a3c72c684..ea3341f635 100644
+--- a/Source/Core/VideoCommon/AbstractGfx.h
++++ b/Source/Core/VideoCommon/AbstractGfx.h
+@@ -151,6 +151,14 @@ public:
+                             const AbstractTexture* src_texture,
+                             const MathUtil::Rectangle<int>& src_rect);
+ 
++  // Scales an intensity/coverage texture and tightens the bilinear transition around glyph edges.
++  // Software rendering falls back to its regular scaler.
++  void SharpenAndScaleTextTexture(AbstractFramebuffer* dst_framebuffer,
++                                  const MathUtil::Rectangle<int>& dst_rect,
++                                  const AbstractTexture* src_texture,
++                                  const MathUtil::Rectangle<int>& src_rect,
++                                  bool preserve_color = false);
++
+   // Converts an upper-left to lower-left if required by the backend, optionally
+   // clamping to the framebuffer size.
+   MathUtil::Rectangle<int> ConvertFramebufferRectangle(const MathUtil::Rectangle<int>& rect,
+diff --git a/Source/Core/VideoCommon/CPUCull.cpp b/Source/Core/VideoCommon/CPUCull.cpp
+index d469235371..cc53a6a17d 100644
+--- a/Source/Core/VideoCommon/CPUCull.cpp
++++ b/Source/Core/VideoCommon/CPUCull.cpp
+@@ -12,6 +12,7 @@
+ #include "VideoCommon/CPMemory.h"
+ #include "VideoCommon/VertexManagerBase.h"
+ #include "VideoCommon/VertexShaderManager.h"
++#include "VideoCommon/VideoConfig.h"
+ #include "VideoCommon/XFMemory.h"
+ 
+ // We really want things like c.w * a.x - a.w * c.x to stay symmetric, so they cancel to zero on
+@@ -164,7 +165,14 @@ bool CPUCull::AreAllVerticesCulled(VertexLoaderBase* loader, OpcodeDecoder::Prim
+   const TransformFunction transform = m_transform_table[posHas3Elems][perVertexPosMtx];
+   transform(m_transform_buffer.get(), src, stride, count);
+   const CullFunction cull = m_cull_table[primitive][cull_mode];
+-  return cull(m_transform_buffer.get(), count);
++  // Native Hor+ can expose geometry outside the emulated projection that was
++  // current when a display list was prepared. Keep rejecting degenerate,
++  // back-facing, and vertically clipped batches, but leave horizontal clip
++  // rejection to the GPU while the native safe-area projection is active.
++  // Disabling CPU culling entirely is not viable for Colosseum because it
++  // submits large unused vertex batches in several rooms and cutscenes.
++  return cull(m_transform_buffer.get(), count,
++              g_ActiveConfig.bWidescreenHudSafeArea);
+ }
+ 
+ template <typename T>
+diff --git a/Source/Core/VideoCommon/CPUCull.h b/Source/Core/VideoCommon/CPUCull.h
+index a5c59af546..0f7059f33a 100644
+--- a/Source/Core/VideoCommon/CPUCull.h
++++ b/Source/Core/VideoCommon/CPUCull.h
+@@ -21,7 +21,7 @@ public:
+   };
+ 
+   using TransformFunction = void (*)(void*, const void*, u32, int);
+-  using CullFunction = bool (*)(const CPUCull::TransformedVertex*, int);
++  using CullFunction = bool (*)(const CPUCull::TransformedVertex*, int, bool);
+ 
+ private:
+   template <typename T>
+diff --git a/Source/Core/VideoCommon/CPUCullImpl.h b/Source/Core/VideoCommon/CPUCullImpl.h
+index e9a1d545c2..d258d13052 100644
+--- a/Source/Core/VideoCommon/CPUCullImpl.h
++++ b/Source/Core/VideoCommon/CPUCullImpl.h
+@@ -554,7 +554,8 @@ ATTR_TARGET static void TransformVertices(void* output, const void* vertices, u3
+ template <CullMode Mode>
+ ATTR_TARGET DOLPHIN_FORCE_INLINE static bool CullTriangle(const CPUCull::TransformedVertex& a,
+                                                           const CPUCull::TransformedVertex& b,
+-                                                          const CPUCull::TransformedVertex& c)
++                                                          const CPUCull::TransformedVertex& c,
++                                                          bool skip_horizontal_clip)
+ {
+   if (Mode == CullMode::All)
+     return true;
+@@ -625,6 +626,11 @@ ATTR_TARGET DOLPHIN_FORCE_INLINE static bool CullTriangle(const CPUCull::Transfo
+   __m128i y_gt_pw = _mm_castps_si128(_mm_cmple_ps(allpw, ally));
+   __m128i x_lt_nw = _mm_castps_si128(_mm_cmplt_ps(allx, allnw));
+   __m128i y_lt_nw = _mm_castps_si128(_mm_cmplt_ps(ally, allnw));
++  if (skip_horizontal_clip)
++  {
++    x_gt_pw = _mm_setzero_si128();
++    x_lt_nw = _mm_setzero_si128();
++  }
+   __m128i any_out_of_bounds = _mm_packs_epi16(_mm_packs_epi32(x_lt_nw, y_lt_nw),  //
+                                               _mm_packs_epi32(x_gt_pw, y_gt_pw));
+   cull |= 0 != _mm_movemask_epi8(_mm_cmpeq_epi32(_mm_set1_epi32(~0), any_out_of_bounds));
+@@ -639,14 +645,21 @@ ATTR_TARGET DOLPHIN_FORCE_INLINE static bool CullTriangle(const CPUCull::Transfo
+   uint16x8_t y_gt_pw = vreinterpretq_u16_u32(vcgtq_f32(ally, allpw));
+   uint16x8_t x_lt_nw = vreinterpretq_u16_u32(vcltq_f32(allx, allnw));
+   uint16x8_t y_lt_nw = vreinterpretq_u16_u32(vcltq_f32(ally, allnw));
++  if (skip_horizontal_clip)
++  {
++    x_gt_pw = vdupq_n_u16(0);
++    x_lt_nw = vdupq_n_u16(0);
++  }
+   uint8x16_t lt_nw = vreinterpretq_u8_u16(vuzp1q_u16(x_lt_nw, y_lt_nw));
+   uint8x16_t gt_pw = vreinterpretq_u8_u16(vuzp1q_u16(x_gt_pw, y_gt_pw));
+   uint32x4_t any_out_of_bounds = vreinterpretq_u32_u8(vuzp1q_u8(lt_nw, gt_pw));
+   cull |= 0xFFFFFFFF == vmaxvq_u32(any_out_of_bounds);
+ #else
+-  cull |= a.x < -a.w && b.x < -b.w && c.x < -c.w;
++  if (!skip_horizontal_clip)
++    cull |= a.x < -a.w && b.x < -b.w && c.x < -c.w;
+   cull |= a.y < -a.w && b.y < -b.w && c.y < -c.w;
+-  cull |= a.x > a.w && b.x > b.w && c.x > c.w;
++  if (!skip_horizontal_clip)
++    cull |= a.x > a.w && b.x > b.w && c.x > c.w;
+   cull |= a.y > a.w && b.y > b.w && c.y > c.w;
+ #endif
+ 
+@@ -655,7 +668,7 @@ ATTR_TARGET DOLPHIN_FORCE_INLINE static bool CullTriangle(const CPUCull::Transfo
+ 
+ template <OpcodeDecoder::Primitive Primitive, CullMode Mode>
+ ATTR_TARGET static bool AreAllVerticesCulled(const CPUCull::TransformedVertex* transformed,
+-                                             int count)
++                                             int count, bool skip_horizontal_clip)
+ {
+   switch (Primitive)
+   {
+@@ -665,15 +678,18 @@ ATTR_TARGET static bool AreAllVerticesCulled(const CPUCull::TransformedVertex* t
+     int i = 3;
+     for (; i < count; i += 4)
+     {
+-      if (!CullTriangle<Mode>(transformed[i - 3], transformed[i - 2], transformed[i - 1]))
++      if (!CullTriangle<Mode>(transformed[i - 3], transformed[i - 2], transformed[i - 1],
++                              skip_horizontal_clip))
+         return false;
+-      if (!CullTriangle<Mode>(transformed[i - 3], transformed[i - 1], transformed[i - 0]))
++      if (!CullTriangle<Mode>(transformed[i - 3], transformed[i - 1], transformed[i - 0],
++                              skip_horizontal_clip))
+         return false;
+     }
+     // three vertices remaining, so render a triangle
+     if (i == count)
+     {
+-      if (!CullTriangle<Mode>(transformed[i - 3], transformed[i - 2], transformed[i - 1]))
++      if (!CullTriangle<Mode>(transformed[i - 3], transformed[i - 2], transformed[i - 1],
++                              skip_horizontal_clip))
+         return false;
+     }
+     break;
+@@ -681,7 +697,8 @@ ATTR_TARGET static bool AreAllVerticesCulled(const CPUCull::TransformedVertex* t
+   case OpcodeDecoder::Primitive::GX_DRAW_TRIANGLES:
+     for (int i = 2; i < count; i += 3)
+     {
+-      if (!CullTriangle<Mode>(transformed[i - 2], transformed[i - 1], transformed[i - 0]))
++      if (!CullTriangle<Mode>(transformed[i - 2], transformed[i - 1], transformed[i - 0],
++                              skip_horizontal_clip))
+         return false;
+     }
+     break;
+@@ -690,7 +707,8 @@ ATTR_TARGET static bool AreAllVerticesCulled(const CPUCull::TransformedVertex* t
+     bool wind = false;
+     for (int i = 2; i < count; ++i)
+     {
+-      if (!CullTriangle<Mode>(transformed[i - 2], transformed[i - !wind], transformed[i - wind]))
++      if (!CullTriangle<Mode>(transformed[i - 2], transformed[i - !wind], transformed[i - wind],
++                              skip_horizontal_clip))
+         return false;
+       wind = !wind;
+     }
+@@ -699,7 +717,8 @@ ATTR_TARGET static bool AreAllVerticesCulled(const CPUCull::TransformedVertex* t
+   case OpcodeDecoder::Primitive::GX_DRAW_TRIANGLE_FAN:
+     for (int i = 2; i < count; ++i)
+     {
+-      if (!CullTriangle<Mode>(transformed[0], transformed[i - 1], transformed[i]))
++      if (!CullTriangle<Mode>(transformed[0], transformed[i - 1], transformed[i],
++                              skip_horizontal_clip))
+         return false;
+     }
+     break;
+diff --git a/Source/Core/VideoCommon/ColosseumTextUpscale.h b/Source/Core/VideoCommon/ColosseumTextUpscale.h
+new file mode 100644
+index 0000000000..41e779e627
+--- /dev/null
++++ b/Source/Core/VideoCommon/ColosseumTextUpscale.h
+@@ -0,0 +1,74 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <cstdint>
++
++namespace ColosseumTextUpscale
++{
++// A 0.30-wide transition is approximately one antialiased output pixel at 4x magnification.
++// The previous 0.60-wide ramp left two to three soft pixels around every glyph contour.
++constexpr float COVERAGE_LOW = 0.35f;
++constexpr float COVERAGE_HIGH = 0.65f;
++constexpr float COLOR_COVERAGE_LOW = 0.22f;
++constexpr float COLOR_COVERAGE_HIGH = 0.78f;
++
++// Battle status labels (Lv/HP/EXP) and their neighboring HUD sprites share this RGB5A3 atlas.
++// Keying the color-preserving path by both dimensions and hash keeps the text option from
++// sharpening unrelated scene textures that happen to use the same format.
++constexpr std::uint64_t BATTLE_STATUS_ATLAS_HASH = 0x592cd77b475e4a80ULL;
++
++enum class Filter
++{
++  None,
++  Coverage,
++  ColorCoverage,
++};
++
++constexpr float SharpenCoverage(float coverage)
++{
++  if (coverage <= COVERAGE_LOW)
++    return 0.0f;
++  if (coverage >= COVERAGE_HIGH)
++    return 1.0f;
++
++  const float t = (coverage - COVERAGE_LOW) / (COVERAGE_HIGH - COVERAGE_LOW);
++  return t * t * (3.0f - 2.0f * t);
++}
++
++struct Plan
++{
++  bool enabled = false;
++  std::uint32_t width = 0;
++  std::uint32_t height = 0;
++  Filter filter = Filter::None;
++};
++
++constexpr Plan GetPlan(bool enabled, bool is_i4, bool is_rgb5a3, std::uint32_t width,
++                       std::uint32_t height, std::uint32_t level_count,
++                       std::uint64_t texture_hash)
++{
++  constexpr std::uint32_t scale = 4;
++  if (!enabled || level_count != 1)
++    return {};
++
++  if (is_i4 && width == 512 && height == 512)
++  {
++    return {.enabled = true,
++            .width = width * scale,
++            .height = height * scale,
++            .filter = Filter::Coverage};
++  }
++
++  if (is_rgb5a3 && width == 256 && height == 239 &&
++      texture_hash == BATTLE_STATUS_ATLAS_HASH)
++  {
++    return {.enabled = true,
++            .width = width * scale,
++            .height = height * scale,
++            .filter = Filter::ColorCoverage};
++  }
++
++  return {};
++}
++}  // namespace ColosseumTextUpscale
+diff --git a/Source/Core/VideoCommon/FramebufferShaderGen.cpp b/Source/Core/VideoCommon/FramebufferShaderGen.cpp
+index 248146e2b6..9401a97225 100644
+--- a/Source/Core/VideoCommon/FramebufferShaderGen.cpp
++++ b/Source/Core/VideoCommon/FramebufferShaderGen.cpp
+@@ -8,6 +8,7 @@
+ #include "Common/Logging/Log.h"
+ 
+ #include "VideoCommon/FramebufferManager.h"
++#include "VideoCommon/ColosseumTextUpscale.h"
+ #include "VideoCommon/ShaderGenCommon.h"
+ #include "VideoCommon/TextureDecoder.h"
+ #include "VideoCommon/VertexShaderGen.h"
+@@ -328,6 +329,48 @@ std::string GenerateTextureCopyPixelShader()
+   return code.GetBuffer();
+ }
+ 
++std::string GenerateTextSharpenPixelShader()
++{
++  ShaderCode code;
++  EmitSamplerDeclarations(code, 0, 1, false);
++  EmitPixelMainDeclaration(code, 1, 0);
++  code.Write("{{\n"
++             "  float4 source = ");
++  EmitSampleTexture(code, 0, "v_tex0");
++  code.Write(";\n"
++             // Colosseum's I4 text surfaces store the same coverage in RGBA. Tightening that
++             // coverage after bilinear enlargement sharpens both the outside edge and the
++             // transparent counters inside glyphs without touching unrelated scene textures.
++             "  float coverage = smoothstep({:.2f}f, {:.2f}f, source.a);\n"
++             "  ocol0 = float4(coverage, coverage, coverage, coverage);\n"
++             "}}\n",
++             ColosseumTextUpscale::COVERAGE_LOW, ColosseumTextUpscale::COVERAGE_HIGH);
++  return code.GetBuffer();
++}
++
++std::string GenerateColorTextSharpenPixelShader()
++{
++  ShaderCode code;
++  EmitSamplerDeclarations(code, 0, 1, false);
++  EmitPixelMainDeclaration(code, 1, 0);
++  code.Write("{{\n"
++             "  float4 source = ");
++  EmitSampleTexture(code, 0, "v_tex0");
++  code.Write(";\n"
++             // The battle-status atlas stores colored labels and icons on transparent black.
++             // Linear enlargement blends their RGB toward black, so recover straight color
++             // before tightening only the coverage transition. This keeps Lv/HP/EXP crisp
++             // without recoloring the surrounding HUD artwork.
++             "  float3 straight_color = source.a > 0.001f ? "
++             "clamp(source.rgb / source.a, 0.0f, 1.0f) : float3(0.0f, 0.0f, 0.0f);\n"
++             "  float coverage = smoothstep({:.2f}f, {:.2f}f, source.a);\n"
++             "  ocol0 = float4(straight_color, coverage);\n"
++             "}}\n",
++             ColosseumTextUpscale::COLOR_COVERAGE_LOW,
++             ColosseumTextUpscale::COLOR_COVERAGE_HIGH);
++  return code.GetBuffer();
++}
++
+ std::string GenerateColorPixelShader()
+ {
+   ShaderCode code;
+diff --git a/Source/Core/VideoCommon/FramebufferShaderGen.h b/Source/Core/VideoCommon/FramebufferShaderGen.h
+index c97fec8991..5c3e186b54 100644
+--- a/Source/Core/VideoCommon/FramebufferShaderGen.h
++++ b/Source/Core/VideoCommon/FramebufferShaderGen.h
+@@ -15,6 +15,8 @@ std::string GenerateScreenQuadVertexShader();
+ std::string GeneratePassthroughGeometryShader(u32 num_tex, u32 num_colors);
+ std::string GenerateTextureCopyVertexShader();
+ std::string GenerateTextureCopyPixelShader();
++std::string GenerateTextSharpenPixelShader();
++std::string GenerateColorTextSharpenPixelShader();
+ std::string GenerateResolveColorPixelShader(u32 samples);
+ std::string GenerateResolveDepthPixelShader(u32 samples);
+ std::string GenerateClearVertexShader();
+diff --git a/Source/Core/VideoCommon/OnScreenUI.cpp b/Source/Core/VideoCommon/OnScreenUI.cpp
+index 451109bbeb..7d7b6d8f96 100644
+--- a/Source/Core/VideoCommon/OnScreenUI.cpp
++++ b/Source/Core/VideoCommon/OnScreenUI.cpp
+@@ -32,6 +32,7 @@
+ #include "VideoCommon/VideoConfig.h"
+ 
+ #include <inttypes.h>
++#include <atomic>
+ #include <mutex>
+ 
+ #include <imgui.h>
+@@ -39,6 +40,17 @@
+ 
+ namespace VideoCommon
+ {
++namespace
++{
++std::atomic<ExternalOverlayDrawCallback> s_external_overlay_draw_callback{
++    nullptr};
++}
++
++void SetExternalOverlayDrawCallback(ExternalOverlayDrawCallback callback)
++{
++  s_external_overlay_draw_callback.store(callback, std::memory_order_release);
++}
++
+ bool OnScreenUI::Initialize(u32 width, u32 height, float scale)
+ {
+   std::unique_lock<std::mutex> imgui_lock(m_imgui_mutex);
+@@ -422,6 +434,11 @@ void OnScreenUI::Finalize()
+   DrawDebugText();
+   OSD::DrawMessages();
+   DrawChallengesAndLeaderboards();
++  if (const auto callback =
++          s_external_overlay_draw_callback.load(std::memory_order_acquire))
++  {
++    callback();
++  }
+   ImGui::Render();
+ 
+   // Check for font changes
+diff --git a/Source/Core/VideoCommon/OnScreenUI.h b/Source/Core/VideoCommon/OnScreenUI.h
+index e9a14e02ba..5ed2eb22d1 100644
+--- a/Source/Core/VideoCommon/OnScreenUI.h
++++ b/Source/Core/VideoCommon/OnScreenUI.h
+@@ -19,6 +19,12 @@ struct ImTextureData;
+ 
+ namespace VideoCommon
+ {
++using ExternalOverlayDrawCallback = void (*)();
++
++// Registers one lightweight overlay drawn on the video thread immediately
++// before ImGui finalizes the frame. Passing nullptr disables it.
++void SetExternalOverlayDrawCallback(ExternalOverlayDrawCallback callback);
++
+ // OnScreenUI handles all the ImGui rendering.
+ class OnScreenUI
+ {
+diff --git a/Source/Core/VideoCommon/ShaderCache.cpp b/Source/Core/VideoCommon/ShaderCache.cpp
+index 565e4f42f8..428ab9d66e 100644
+--- a/Source/Core/VideoCommon/ShaderCache.cpp
++++ b/Source/Core/VideoCommon/ShaderCache.cpp
+@@ -404,11 +404,15 @@ void ShaderCache::ClearCaches()
+   m_texcoord_geometry_shader.reset();
+   m_color_geometry_shader.reset();
+   m_texture_copy_pixel_shader.reset();
++  m_text_sharpen_pixel_shader.reset();
++  m_color_text_sharpen_pixel_shader.reset();
+   m_color_pixel_shader.reset();
+ 
+   m_efb_copy_to_vram_pipelines.clear();
+   m_efb_copy_to_ram_pipelines.clear();
+   m_copy_rgba8_pipeline.reset();
++  m_text_sharpen_rgba8_pipeline.reset();
++  m_color_text_sharpen_rgba8_pipeline.reset();
+   m_rgba8_stereo_copy_pipeline.reset();
+   for (auto& pipeline : m_palette_conversion_pipelines)
+     pipeline.reset();
+@@ -1349,10 +1353,17 @@ bool ShaderCache::CompileSharedPipelines()
+   m_texture_copy_pixel_shader = g_gfx->CreateShaderFromSource(
+       ShaderStage::Pixel, FramebufferShaderGen::GenerateTextureCopyPixelShader(), nullptr,
+       "Texture copy pixel shader");
++  m_text_sharpen_pixel_shader = g_gfx->CreateShaderFromSource(
++      ShaderStage::Pixel, FramebufferShaderGen::GenerateTextSharpenPixelShader(), nullptr,
++      "Colosseum text sharpen pixel shader");
++  m_color_text_sharpen_pixel_shader = g_gfx->CreateShaderFromSource(
++      ShaderStage::Pixel, FramebufferShaderGen::GenerateColorTextSharpenPixelShader(), nullptr,
++      "Colosseum color text sharpen pixel shader");
+   m_color_pixel_shader = g_gfx->CreateShaderFromSource(
+       ShaderStage::Pixel, FramebufferShaderGen::GenerateColorPixelShader(), nullptr,
+       "Color pixel shader");
+-  if (!m_texture_copy_pixel_shader || !m_color_pixel_shader)
++  if (!m_texture_copy_pixel_shader || !m_text_sharpen_pixel_shader ||
++      !m_color_text_sharpen_pixel_shader || !m_color_pixel_shader)
+     return false;
+ 
+   AbstractPipelineConfig config;
+@@ -1369,6 +1380,18 @@ bool ShaderCache::CompileSharedPipelines()
+   if (!m_copy_rgba8_pipeline)
+     return false;
+ 
++  config.pixel_shader = m_text_sharpen_pixel_shader.get();
++  m_text_sharpen_rgba8_pipeline = g_gfx->CreatePipeline(config);
++  if (!m_text_sharpen_rgba8_pipeline)
++    return false;
++
++  config.pixel_shader = m_color_text_sharpen_pixel_shader.get();
++  m_color_text_sharpen_rgba8_pipeline = g_gfx->CreatePipeline(config);
++  if (!m_color_text_sharpen_rgba8_pipeline)
++    return false;
++
++  config.pixel_shader = m_texture_copy_pixel_shader.get();
++
+   if (UseGeometryShaderForEFBCopies())
+   {
+     config.geometry_shader = m_texcoord_geometry_shader.get();
+diff --git a/Source/Core/VideoCommon/ShaderCache.h b/Source/Core/VideoCommon/ShaderCache.h
+index c76f7dac16..f278ed428c 100644
+--- a/Source/Core/VideoCommon/ShaderCache.h
++++ b/Source/Core/VideoCommon/ShaderCache.h
+@@ -88,6 +88,14 @@ public:
+   {
+     return m_texture_copy_pixel_shader.get();
+   }
++  const AbstractShader* GetTextSharpenPixelShader() const
++  {
++    return m_text_sharpen_pixel_shader.get();
++  }
++  const AbstractShader* GetColorTextSharpenPixelShader() const
++  {
++    return m_color_text_sharpen_pixel_shader.get();
++  }
+   const AbstractShader* GetColorGeometryShader() const { return m_color_geometry_shader.get(); }
+   const AbstractShader* GetColorPixelShader() const { return m_color_pixel_shader.get(); }
+ 
+@@ -98,6 +106,14 @@ public:
+ 
+   // RGBA8 framebuffer copy pipelines
+   const AbstractPipeline* GetRGBA8CopyPipeline() const { return m_copy_rgba8_pipeline.get(); }
++  const AbstractPipeline* GetRGBA8TextSharpenPipeline() const
++  {
++    return m_text_sharpen_rgba8_pipeline.get();
++  }
++  const AbstractPipeline* GetRGBA8ColorTextSharpenPipeline() const
++  {
++    return m_color_text_sharpen_rgba8_pipeline.get();
++  }
+   const AbstractPipeline* GetRGBA8StereoCopyPipeline() const
+   {
+     return m_rgba8_stereo_copy_pipeline.get();
+@@ -204,6 +220,8 @@ private:
+   std::unique_ptr<AbstractShader> m_texcoord_geometry_shader;
+   std::unique_ptr<AbstractShader> m_color_geometry_shader;
+   std::unique_ptr<AbstractShader> m_texture_copy_pixel_shader;
++  std::unique_ptr<AbstractShader> m_text_sharpen_pixel_shader;
++  std::unique_ptr<AbstractShader> m_color_text_sharpen_pixel_shader;
+   std::unique_ptr<AbstractShader> m_color_pixel_shader;
+ 
+   // GX Shader Caches
+@@ -239,6 +257,8 @@ private:
+ 
+   // Copy pipeline for RGBA8 textures
+   std::unique_ptr<AbstractPipeline> m_copy_rgba8_pipeline;
++  std::unique_ptr<AbstractPipeline> m_text_sharpen_rgba8_pipeline;
++  std::unique_ptr<AbstractPipeline> m_color_text_sharpen_rgba8_pipeline;
+   std::unique_ptr<AbstractPipeline> m_rgba8_stereo_copy_pipeline;
+ 
+   // Palette conversion pipelines
+diff --git a/Source/Core/VideoCommon/TextureCacheBase.cpp b/Source/Core/VideoCommon/TextureCacheBase.cpp
+index c5d6096391..179d2ab95b 100644
+--- a/Source/Core/VideoCommon/TextureCacheBase.cpp
++++ b/Source/Core/VideoCommon/TextureCacheBase.cpp
+@@ -4,6 +4,7 @@
+ #include "VideoCommon/TextureCacheBase.h"
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <chrono>
+ #include <cmath>
+ #include <cstring>
+@@ -40,6 +41,7 @@
+ #include "VideoCommon/Assets/CustomTextureData.h"
+ #include "VideoCommon/Assets/TextureAssetUtils.h"
+ #include "VideoCommon/BPMemory.h"
++#include "VideoCommon/ColosseumTextUpscale.h"
+ #include "VideoCommon/FramebufferManager.h"
+ #include "VideoCommon/GraphicsModSystem/Runtime/FBInfo.h"
+ #include "VideoCommon/GraphicsModSystem/Runtime/GraphicsModActionData.h"
+@@ -67,6 +69,31 @@ static int xfb_count = 0;
+ 
+ std::unique_ptr<TextureCacheBase> g_texture_cache;
+ 
++namespace
++{
++std::atomic_bool s_colosseum_text_upscale_enabled{false};
++std::atomic<u64> s_colosseum_text_upscale_count{0};
++
++}  // namespace
++
++bool IsColosseumTextUpscaleEnabled()
++{
++  return s_colosseum_text_upscale_enabled.load(std::memory_order_relaxed);
++}
++
++void SetColosseumTextUpscaleEnabled(bool enabled)
++{
++  const bool previous =
++      s_colosseum_text_upscale_enabled.exchange(enabled, std::memory_order_relaxed);
++  if (enabled && !previous)
++    s_colosseum_text_upscale_count.store(0, std::memory_order_relaxed);
++}
++
++u64 GetColosseumTextUpscaleCount()
++{
++  return s_colosseum_text_upscale_count.load(std::memory_order_relaxed);
++}
++
+ TCacheEntry::TCacheEntry(std::unique_ptr<AbstractTexture> tex,
+                          std::unique_ptr<AbstractFramebuffer> fb)
+     : texture(std::move(tex)), framebuffer(std::move(fb))
+@@ -386,7 +413,8 @@ RcTcacheEntry TextureCacheBase::ReinterpretEntry(const RcTcacheEntry& existing_e
+   return reinterpreted_entry;
+ }
+ 
+-void TextureCacheBase::ScaleTextureCacheEntryTo(RcTcacheEntry& entry, u32 new_width, u32 new_height)
++void TextureCacheBase::ScaleTextureCacheEntryTo(RcTcacheEntry& entry, u32 new_width, u32 new_height,
++                                                bool sharpen_text, bool preserve_text_color)
+ {
+   if (entry->GetWidth() == new_width && entry->GetHeight() == new_height)
+   {
+@@ -411,8 +439,18 @@ void TextureCacheBase::ScaleTextureCacheEntryTo(RcTcacheEntry& entry, u32 new_wi
+   }
+ 
+   // No need to convert the coordinates here since they'll be the same.
+-  g_gfx->ScaleTexture(new_texture->framebuffer.get(), new_texture->texture->GetConfig().GetRect(),
+-                      entry->texture.get(), entry->texture->GetConfig().GetRect());
++  if (sharpen_text)
++  {
++    g_gfx->SharpenAndScaleTextTexture(new_texture->framebuffer.get(),
++                                      new_texture->texture->GetConfig().GetRect(),
++                                      entry->texture.get(), entry->texture->GetConfig().GetRect(),
++                                      preserve_text_color);
++  }
++  else
++  {
++    g_gfx->ScaleTexture(new_texture->framebuffer.get(), new_texture->texture->GetConfig().GetRect(),
++                        entry->texture.get(), entry->texture->GetConfig().GetRect());
++  }
+   entry->texture.swap(new_texture->texture);
+   entry->framebuffer.swap(new_texture->framebuffer);
+ 
+@@ -1653,6 +1691,11 @@ RcTcacheEntry TextureCacheBase::CreateTextureEntry(
+     const u32 width = texture_info.GetRawWidth();
+     const u32 height = texture_info.GetRawHeight();
+ 
++    const ColosseumTextUpscale::Plan text_upscale_plan = ColosseumTextUpscale::GetPlan(
++        IsColosseumTextUpscaleEnabled(), texture_info.GetTextureFormat() == TextureFormat::I4,
++        texture_info.GetTextureFormat() == TextureFormat::RGB5A3, width, height,
++        texture_info.GetLevelCount(), creation_info.full_hash);
++    const bool upscale_text = text_upscale_plan.enabled;
+     const TextureConfig config(width, height, texLevels, 1, 1, AbstractTextureFormat::RGBA8, 0,
+                                AbstractTextureType::Texture_2DArray);
+     entry = AllocateCacheEntry(config);
+@@ -1759,7 +1802,8 @@ RcTcacheEntry TextureCacheBase::CreateTextureEntry(
+ 
+     entry->has_arbitrary_mips = arbitrary_mip_detector.HasArbitraryMipmaps(dst_buffer);
+ 
+-    if (g_ActiveConfig.bDumpTextures && !skip_texture_dump && texLevels > 0)
++    if (g_ActiveConfig.bDumpTextures && !skip_texture_dump && !upscale_text &&
++        texLevels > 0)
+     {
+       const std::string basename = texture_info.CalculateTextureName().GetFullName();
+       if (g_ActiveConfig.bDumpBaseTextures)
+@@ -1774,6 +1818,18 @@ RcTcacheEntry TextureCacheBase::CreateTextureEntry(
+         }
+       }
+     }
++
++    if (upscale_text)
++    {
++      // Keep text uploads native-sized, then reconstruct them once on the GPU. Dynamic glyph
++      // surfaces avoid typewriter-animation hash churn, while the exact battle HUD atlas uses
++      // a color-preserving coverage pass for its Lv/HP/EXP labels.
++      ScaleTextureCacheEntryTo(
++          entry, text_upscale_plan.width, text_upscale_plan.height, true,
++          text_upscale_plan.filter == ColosseumTextUpscale::Filter::ColorCoverage);
++      s_colosseum_text_upscale_count.fetch_add(1, std::memory_order_relaxed);
++    }
++    entry->is_custom_tex = upscale_text;
+   }
+ 
+   const auto iter = m_textures_by_address.emplace(texture_info.GetRawAddress(), entry);
+diff --git a/Source/Core/VideoCommon/TextureCacheBase.h b/Source/Core/VideoCommon/TextureCacheBase.h
+index d596f84e5e..b6f7c70080 100644
+--- a/Source/Core/VideoCommon/TextureCacheBase.h
++++ b/Source/Core/VideoCommon/TextureCacheBase.h
+@@ -49,6 +49,10 @@ constexpr std::string_view XFB_DUMP_PREFIX = "xfb1";
+ 
+ static constexpr int FRAMECOUNT_INVALID = 0;
+ 
++bool IsColosseumTextUpscaleEnabled();
++void SetColosseumTextUpscaleEnabled(bool enabled);
++u64 GetColosseumTextUpscaleCount();
++
+ struct TextureAndTLUTFormat
+ {
+   TextureAndTLUTFormat(TextureFormat texfmt_ = TextureFormat::I4,
+@@ -292,7 +296,8 @@ public:
+                                  bool clamp_bottom,
+                                  const CopyFilterCoefficients::Values& filter_coefficients);
+ 
+-  void ScaleTextureCacheEntryTo(RcTcacheEntry& entry, u32 new_width, u32 new_height);
++  void ScaleTextureCacheEntryTo(RcTcacheEntry& entry, u32 new_width, u32 new_height,
++                                bool sharpen_text = false, bool preserve_text_color = false);
+ 
+   // Flushes all pending EFB copies to emulated RAM.
+   void FlushEFBCopies();
+diff --git a/Source/Core/VideoCommon/VertexShaderManager.cpp b/Source/Core/VideoCommon/VertexShaderManager.cpp
+index 6d69803827..85cb48008a 100644
+--- a/Source/Core/VideoCommon/VertexShaderManager.cpp
++++ b/Source/Core/VideoCommon/VertexShaderManager.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include "VideoCommon/VertexShaderManager.h"
+ 
++#include <algorithm>
+ #include <array>
+ #include <cmath>
+ #include <cstring>
+@@ -49,9 +50,26 @@ Common::Matrix44 VertexShaderManager::LoadProjectionMatrix()
+     const Common::Vec2 fov_multiplier = g_freelook_camera.IsActive() ?
+                                             g_freelook_camera.GetFieldOfViewMultiplier() :
+                                             Common::Vec2{1, 1};
+-    m_projection_matrix[0] = rawProjection[0] * g_ActiveConfig.fAspectRatioHackW * fov_multiplier.x;
++    // Colosseum can retain a cached 16:9 projection after loading a state or
++    // changing output modes even though its game-side aspect constant has
++    // already been updated. Correct only projections that still describe a
++    // roughly 16:9 frustum; projections rebuilt by the game for the native
++    // target aspect pass through unchanged. This preserves the original
++    // vertical framing and character size while revealing more world
++    // horizontally (Hor+).
++    const float raw_aspect =
++        rawProjection[0] != 0.0f ? std::abs(rawProjection[2] / rawProjection[0]) : 0.0f;
++    const bool is_cached_widescreen_projection =
++        raw_aspect >= 1.6f && raw_aspect <= 2.0f;
++    const float native_hor_plus_scale =
++        g_ActiveConfig.bWidescreenHudSafeArea && is_cached_widescreen_projection ?
++            std::clamp(g_ActiveConfig.fWidescreenHudSafeAreaScale, 0.25f, 1.0f) :
++            1.0f;
++    const float horizontal_scale =
++        g_ActiveConfig.fAspectRatioHackW * fov_multiplier.x * native_hor_plus_scale;
++    m_projection_matrix[0] = rawProjection[0] * horizontal_scale;
+     m_projection_matrix[1] = 0.0f;
+-    m_projection_matrix[2] = rawProjection[1] * g_ActiveConfig.fAspectRatioHackW * fov_multiplier.x;
++    m_projection_matrix[2] = rawProjection[1] * horizontal_scale;
+     m_projection_matrix[3] = 0.0f;
+ 
+     m_projection_matrix[4] = 0.0f;
+@@ -76,6 +94,10 @@ Common::Matrix44 VertexShaderManager::LoadProjectionMatrix()
+ 
+   case ProjectionType::Orthographic:
+   {
++    // Colosseum composites the perspective world and its 2D overlays through
++    // the same orthographic full-screen quad. Scaling this projection shrinks
++    // the whole camera and exposes stale EFB regions, so preserve it verbatim.
++    // Complete menu canvases are handled by the presenter instead.
+     m_projection_matrix[0] = rawProjection[0];
+     m_projection_matrix[1] = 0.0f;
+     m_projection_matrix[2] = 0.0f;
+diff --git a/Source/Core/VideoCommon/VideoConfig.cpp b/Source/Core/VideoCommon/VideoConfig.cpp
+index a6193853f6..336027e362 100644
+--- a/Source/Core/VideoCommon/VideoConfig.cpp
++++ b/Source/Core/VideoCommon/VideoConfig.cpp
+@@ -25,6 +25,7 @@
+ #include "VideoCommon/Fifo.h"
+ #include "VideoCommon/FramebufferManager.h"
+ #include "VideoCommon/FreeLookCamera.h"
++#include "VideoCommon/GeometryShaderManager.h"
+ #include "VideoCommon/GraphicsModSystem/Runtime/GraphicsModManager.h"
+ #include "VideoCommon/OnScreenDisplay.h"
+ #include "VideoCommon/PixelShaderManager.h"
+@@ -32,6 +33,7 @@
+ #include "VideoCommon/TextureCacheBase.h"
+ #include "VideoCommon/VertexManagerBase.h"
+ #include "VideoCommon/XFMemory.h"
++#include "VideoCommon/XFStateManager.h"
+ 
+ VideoConfig g_Config;
+ VideoConfig g_ActiveConfig;
+@@ -86,6 +88,10 @@ void VideoConfig::Refresh()
+   iUsePresentDrawable = Config::Get(Config::GFX_MTL_USE_PRESENT_DRAWABLE);
+ 
+   bWidescreenHack = Config::Get(Config::GFX_WIDESCREEN_HACK);
++  bWidescreenHudSafeArea =
++      Config::Get(Config::GFX_WIDESCREEN_HUD_SAFE_AREA);
++  fWidescreenHudSafeAreaScale =
++      Config::Get(Config::GFX_WIDESCREEN_HUD_SAFE_AREA_SCALE);
+   aspect_mode = Config::Get(Config::GFX_ASPECT_RATIO);
+   custom_aspect_width = Config::Get(Config::GFX_CUSTOM_ASPECT_RATIO_WIDTH);
+   custom_aspect_height = Config::Get(Config::GFX_CUSTOM_ASPECT_RATIO_HEIGHT);
+@@ -307,6 +313,9 @@ void CheckForConfigChanges()
+   const AspectMode old_aspect_mode = g_ActiveConfig.aspect_mode;
+   const AspectMode old_suggested_aspect_mode = g_ActiveConfig.suggested_aspect_mode;
+   const bool old_widescreen_hack = g_ActiveConfig.bWidescreenHack;
++  const bool old_widescreen_hud_safe_area = g_ActiveConfig.bWidescreenHudSafeArea;
++  const float old_widescreen_hud_safe_area_scale =
++      g_ActiveConfig.fWidescreenHudSafeAreaScale;
+   const auto old_post_processing_shader = g_ActiveConfig.sPostProcessingShader;
+   const auto old_hdr = g_ActiveConfig.bHDR;
+ 
+@@ -359,6 +368,11 @@ void CheckForConfigChanges()
+     changed_bits |= CONFIG_CHANGE_BIT_ASPECT_RATIO;
+   if (old_widescreen_hack != g_ActiveConfig.bWidescreenHack)
+     changed_bits |= CONFIG_CHANGE_BIT_ASPECT_RATIO;
++  const bool widescreen_hud_safe_area_changed =
++      old_widescreen_hud_safe_area != g_ActiveConfig.bWidescreenHudSafeArea ||
++      old_widescreen_hud_safe_area_scale != g_ActiveConfig.fWidescreenHudSafeAreaScale;
++  if (widescreen_hud_safe_area_changed)
++    changed_bits |= CONFIG_CHANGE_BIT_ASPECT_RATIO;
+   if (old_post_processing_shader != g_ActiveConfig.sPostProcessingShader)
+     changed_bits |= CONFIG_CHANGE_BIT_POST_PROCESSING_SHADER;
+   if (old_hdr != g_ActiveConfig.bHDR)
+@@ -384,6 +398,13 @@ void CheckForConfigChanges()
+     pixel_shader_manager.Dirty();
+   }
+ 
++  if (widescreen_hud_safe_area_changed)
++  {
++    auto& system = Core::System::GetInstance();
++    system.GetXFStateManager().SetProjectionChanged();
++    system.GetGeometryShaderManager().SetProjectionChanged();
++  }
++
+   // Reload shaders if host config has changed.
+   if (changed_bits & (CONFIG_CHANGE_BIT_HOST_CONFIG | CONFIG_CHANGE_BIT_MULTISAMPLES))
+   {
+diff --git a/Source/Core/VideoCommon/VideoConfig.h b/Source/Core/VideoCommon/VideoConfig.h
+index ec06f4a606..62e9044b20 100644
+--- a/Source/Core/VideoCommon/VideoConfig.h
++++ b/Source/Core/VideoCommon/VideoConfig.h
+@@ -198,6 +198,8 @@ struct VideoConfig final
+   bool bVSync = false;
+   bool bVSyncActive = false;
+   bool bWidescreenHack = false;
++  bool bWidescreenHudSafeArea = false;
++  float fWidescreenHudSafeAreaScale = 1.0f;
+   AspectMode aspect_mode{};
+   int custom_aspect_width = 1;
+   int custom_aspect_height = 1;
+diff --git a/Source/UnitTests/CMakeLists.txt b/Source/UnitTests/CMakeLists.txt
+index 7b03f71e4c..659d9e5b28 100644
+--- a/Source/UnitTests/CMakeLists.txt
++++ b/Source/UnitTests/CMakeLists.txt
+@@ -5,7 +5,6 @@ add_custom_command(TARGET unittests POST_BUILD COMMAND ${CMAKE_CTEST_COMMAND} "-
+ string(APPEND CMAKE_RUNTIME_OUTPUT_DIRECTORY "/Tests")
+ 
+ add_executable(tests EXCLUDE_FROM_ALL UnitTestsMain.cpp StubHost.cpp)
+-target_sources(tests PRIVATE ../../GXRuntime/src/core/cpu_exception.c)
+ set_target_properties(tests PROPERTIES FOLDER Tests)
+ target_link_libraries(tests PRIVATE fmt::fmt gtest::gtest core uicommon)
+ add_test(NAME tests COMMAND tests)

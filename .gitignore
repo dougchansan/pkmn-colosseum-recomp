@@ -1,0 +1,76 @@
+iso/
+extracted/
+generated/
+build/
+extern/
+database/
+build-*/
+cmake-build-*/
+CMakeUserPresets.json
+.cache/
+
+# Local ImGui release payload installed by scripts/package-imgui-launcher.ps1
+/moderngekko-run.exe
+/gGC6E01_recomp.dll
+/Sys/
+/User/
+/default-game.txt
+/Wii/
+/artifacts/
+/config.ini
+
+# Game data and copyrighted assets - never commit
+*.iso
+*.rvz
+*.gcm
+*.wbfs
+*.ciso
+*.dol
+*.rel
+*.gci
+*.raw
+*.tpl
+*.arc
+*.fsys
+/Sys/
+/User/
+/extracted/
+/iso/
+
+# Build artifacts and binaries
+*.exe
+*.dll
+*.lib
+*.a
+*.so
+*.dylib
+*.pdb
+*.ilk
+*.exp
+
+# Credentials - never commit
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*_token
+*.credentials
+secrets.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local build artifacts
+/.omx/
+**/__pycache__/
+*.pyc
+*.obj
+/b3/
+/b60/
+/mbench/
+/mbench_auto*/
