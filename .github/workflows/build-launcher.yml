@@ -40,7 +40,7 @@ jobs:
         shell: bash
         run: |
           # dispatch -> caller's choice; PR -> linux only (cheap); tag -> all three.
-          sel='${{ github.event_name == ''workflow_dispatch'' && inputs.platforms || github.event_name == ''pull_request'' && ''linux'' || ''all'' }}'
+          sel="${{ github.event_name == 'workflow_dispatch' && inputs.platforms || github.event_name == 'pull_request' && 'linux' || 'all' }}"
           linux='{"os":"ubuntu-latest","label":"linux-x86_64","modlib":"mod.so","exe":""}'
           win='{"os":"windows-latest","label":"win64","modlib":"mod.dll","exe":".exe"}'
           mac='{"os":"macos-latest","label":"macos-arm64","modlib":"mod.dylib","exe":""}'
