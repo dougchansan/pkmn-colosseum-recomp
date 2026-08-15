@@ -11,7 +11,7 @@
     "ref": "master",
     "baseCommit": "884c20505d7179160f8bb01d9db0f723c53b09cb",
     "patch": "moderngekko.patch",
-    "sha256": "2EBFC536BA171764116CBF8C4ECE3B0B014098059FFC384E2C9367753D3A6329"
+      "sha256": "D81E8B9CA5808DF114CD4DCDE90A9AF416F39671F5E8A0F7CD3269C069EA458E"
   },
   "recompCore": {
     "repository": "https://github.com/ExpansionPak/RecompCore.git",
@@ -19,6 +19,6 @@
     "baseCommit": "13e492094902644b0d113c586300d358640f9e19",
     "relativePath": "vendor/dolphin",
     "patch": "recompcore.patch",
-    "sha256": "19D4452FEB0010EBE78746AF04D909513C64BCEB490172B240A3EE929A901E6E"
+      "sha256": "0087EBECBE3A1675CB6DED78AEF78B0E1FC941B0A679F257D1045047A978E9E2"
   }
 }

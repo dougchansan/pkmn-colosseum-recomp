@@ -8,7 +8,7 @@ index 71916b7..924dd3c 100644
  /extern/wit/
 +*.orig
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index da4e06d..688a11c 100644
+index da4e06d..6777665 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -44,10 +44,18 @@ set(MODERNGEKKO_DEFAULT_WINDOW_TITLE "" CACHE STRING
@@ -30,15 +30,16 @@ index da4e06d..688a11c 100644
  set(MODERNGEKKO_DISC_PREPARER_OUTPUT_NAME "" CACHE STRING
      "Optional adjacent disc preparation executable")
  set(MODERNGEKKO_DOL_PATCH_MANIFEST "" CACHE FILEPATH
-@@ -236,6 +244,7 @@ target_include_directories(moderngekko_legacy PRIVATE
+@@ -236,6 +244,8 @@ target_include_directories(moderngekko_legacy PRIVATE
  target_link_libraries(moderngekko PUBLIC ModernGekko::ABI PRIVATE fmt::fmt)
  if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
      target_sources(moderngekko PRIVATE
 +        tools/automation_protocol.cpp
++        src/runtime/hd_texture_pack.cpp
          src/runtime/dolphin_runtime.cpp
          vendor/dolphin/Source/Core/DolphinNoGUI/Platform.cpp
          vendor/dolphin/Source/Core/DolphinNoGUI/PlatformHeadless.cpp
-@@ -270,7 +279,7 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -270,7 +280,7 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
      else()
          target_compile_definitions(moderngekko PRIVATE _M_GENERIC=1)
      endif()
@@ -47,7 +48,7 @@ index da4e06d..688a11c 100644
      if(TARGET PkgConfig::X11)
          target_sources(moderngekko PRIVATE
              vendor/dolphin/Source/Core/DolphinNoGUI/PlatformX11.cpp)
-@@ -380,6 +389,7 @@ endif()
+@@ -380,6 +390,7 @@ endif()
  target_compile_features(moderngekko PUBLIC cxx_std_23)
  if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
      target_include_directories(moderngekko PRIVATE
@@ -55,7 +56,7 @@ index da4e06d..688a11c 100644
          "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/Source/Core")
  else()
      target_include_directories(moderngekko PRIVATE
-@@ -468,10 +478,26 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -468,10 +479,26 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
          target_compile_definitions(moderngekko-run PRIVATE
              MODERNGEKKO_PORTABLE_DEFAULT_GAME=1)
      endif()
@@ -82,7 +83,7 @@ index da4e06d..688a11c 100644
      if(MODERNGEKKO_USER_DIRECTORY_IN_DOCUMENTS)
          target_compile_definitions(moderngekko-run PRIVATE
              MODERNGEKKO_USER_DIRECTORY_IN_DOCUMENTS=1)
-@@ -556,6 +582,10 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -556,6 +583,10 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
          target_compile_definitions(moderngekko-launcher PRIVATE
              MODERNGEKKO_PORTABLE_DEFAULT_GAME=1)
      endif()
@@ -93,7 +94,7 @@ index da4e06d..688a11c 100644
      if(MODERNGEKKO_GAMECUBE_CONTROLLERS)
          target_compile_definitions(moderngekko-launcher PRIVATE
              MODERNGEKKO_GAMECUBE_CONTROLLERS=1)
-@@ -590,10 +620,38 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -590,10 +621,38 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
      endif()
      add_dependencies(moderngekko-launcher moderngekko-run)
  
@@ -133,10 +134,18 @@ index da4e06d..688a11c 100644
      if(DOLRECOMP_ENABLE_LLVM)
          target_compile_definitions(moderngekko-port PRIVATE
              MODERNGEKKO_DOLRECOMP_LLVM=1)
-@@ -680,6 +738,24 @@ if(BUILD_TESTING)
+@@ -680,6 +739,39 @@ if(BUILD_TESTING)
      add_test(NAME moderngekko.frontend_config_gamecube
               COMMAND moderngekko_frontend_config_gamecube_test)
  
++    add_executable(moderngekko_hd_texture_pack_test
++        tests/hd_texture_pack_test.cpp)
++    target_link_libraries(moderngekko_hd_texture_pack_test PRIVATE
++        ModernGekko::Runtime uicommon)
++    target_compile_features(moderngekko_hd_texture_pack_test PRIVATE cxx_std_23)
++    add_test(NAME moderngekko.hd_texture_pack
++             COMMAND moderngekko_hd_texture_pack_test)
++
 +    add_executable(moderngekko_colosseum_text_upscale_test
 +        tests/colosseum_text_upscale_test.cpp)
 +    target_include_directories(moderngekko_colosseum_text_upscale_test PRIVATE
@@ -144,6 +153,14 @@ index da4e06d..688a11c 100644
 +    target_compile_features(moderngekko_colosseum_text_upscale_test PRIVATE cxx_std_23)
 +    add_test(NAME moderngekko.colosseum_text_upscale
 +             COMMAND moderngekko_colosseum_text_upscale_test)
++
++    add_executable(moderngekko_colosseum_projection_test
++        tests/colosseum_projection_test.cpp)
++    target_include_directories(moderngekko_colosseum_projection_test PRIVATE
++        "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/Source/Core")
++    target_compile_features(moderngekko_colosseum_projection_test PRIVATE cxx_std_23)
++    add_test(NAME moderngekko.colosseum_projection
++             COMMAND moderngekko_colosseum_projection_test)
 +
 +    add_executable(moderngekko_automation_protocol_test
 +        tests/automation_protocol_test.cpp
@@ -154,11 +171,10 @@ index da4e06d..688a11c 100644
 +    target_compile_features(moderngekko_automation_protocol_test PRIVATE cxx_std_23)
 +    add_test(NAME moderngekko.automation_protocol
 +             COMMAND moderngekko_automation_protocol_test)
-+
      if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
          add_executable(moderngekko_netplay_protocol_test
              tests/netplay_protocol_test.cpp
-@@ -690,6 +766,12 @@ if(BUILD_TESTING)
+@@ -690,6 +782,12 @@ if(BUILD_TESTING)
              "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/GXRuntime/include")
          target_compile_definitions(moderngekko_netplay_protocol_test PRIVATE
              MODERNGEKKO_NETPLAY_TEST_MOD_PATH="$<TARGET_FILE:moderngekko_test_mod>")
@@ -171,7 +187,7 @@ index da4e06d..688a11c 100644
          if(CMAKE_SIZEOF_VOID_P EQUAL 8)
              target_compile_definitions(moderngekko_netplay_protocol_test PRIVATE _ARCH_64=1)
          else()
-@@ -715,21 +797,6 @@ if(BUILD_TESTING)
+@@ -715,21 +813,6 @@ if(BUILD_TESTING)
              target_link_libraries(moderngekko_netplay_protocol_test PRIVATE
                  ModernGekko::Runtime core uicommon)
          endif()
@@ -193,11 +209,41 @@ index da4e06d..688a11c 100644
          add_test(NAME moderngekko.netplay_protocol COMMAND moderngekko_netplay_protocol_test)
      endif()
  
+diff --git a/include/moderngekko/hd_texture_pack.hpp b/include/moderngekko/hd_texture_pack.hpp
+new file mode 100644
+index 0000000..826f048
+--- /dev/null
++++ b/include/moderngekko/hd_texture_pack.hpp
+@@ -0,0 +1,24 @@
++#pragma once
++
++#include <cstddef>
++#include <filesystem>
++#include <string>
++
++namespace moderngekko
++{
++struct CommunityHdTexturePackStatus
++{
++  bool available = false;
++  bool installed = false;
++  std::size_t texture_count = 0;
++  std::string name;
++  std::string version;
++  std::string error;
++};
++
++CommunityHdTexturePackStatus
++GetCommunityHdTexturePackStatus(const std::filesystem::path& user_directory);
++
++bool SetCommunityHdTexturePackEnabled(const std::filesystem::path& user_directory,
++                                      bool enabled, std::string* error);
++}  // namespace moderngekko
 diff --git a/include/moderngekko/runtime.hpp b/include/moderngekko/runtime.hpp
-index 5ba5853..2f2de2d 100644
+index 5ba5853..c25ecd9 100644
 --- a/include/moderngekko/runtime.hpp
 +++ b/include/moderngekko/runtime.hpp
-@@ -32,6 +32,32 @@ struct GraphicsSettings
+@@ -32,6 +32,33 @@ struct GraphicsSettings
  {
    std::string backend;
    std::optional<int> internal_resolution_scale;
@@ -209,6 +255,7 @@ index 5ba5853..2f2de2d 100644
 +  int osd_font_size = 13;
 +  int navigation_overlay = 0;
 +  bool hires_textures = false;
++  bool community_hd_texture_pack = false;
 +  bool cache_hires_textures = false;
 +  bool dump_textures = false;
 +  bool text_upscale = false;
@@ -230,7 +277,7 @@ index 5ba5853..2f2de2d 100644
  };
  
  struct AudioSettings
-@@ -44,6 +70,11 @@ struct InputSettings
+@@ -44,6 +71,11 @@ struct InputSettings
    bool background_input = false;
  };
  
@@ -242,7 +289,7 @@ index 5ba5853..2f2de2d 100644
  enum class WindowSystem
  {
    Default,
-@@ -60,6 +91,8 @@ struct RuntimeConfig
+@@ -60,6 +92,8 @@ struct RuntimeConfig
    GraphicsSettings graphics;
    AudioSettings audio;
    InputSettings input;
@@ -252,11 +299,12 @@ index 5ba5853..2f2de2d 100644
    bool headless = false;
    bool fullscreen = false;
 diff --git a/src/runtime/dolphin_runtime.cpp b/src/runtime/dolphin_runtime.cpp
-index 4579a77..83139e3 100644
+index 4579a77..bd22a47 100644
 --- a/src/runtime/dolphin_runtime.cpp
 +++ b/src/runtime/dolphin_runtime.cpp
-@@ -1,15 +1,25 @@
+@@ -1,15 +1,26 @@
  #include "moderngekko/runtime.hpp"
++#include "moderngekko/hd_texture_pack.hpp"
  
 +#include "automation_protocol.hpp"
 +#include "launcher_savestates.hpp"
@@ -282,11 +330,12 @@ index 4579a77..83139e3 100644
  #include "Core/Host.h"
  #include "Core/NetPlay/NetPlayClient.h"
  #include "Core/PowerPC/JitInterface.h"
-@@ -18,24 +28,45 @@
+@@ -18,24 +29,46 @@
  #include "Core/System.h"
  #include "DolphinNoGUI/Platform.h"
  #include "UICommon/UICommon.h"
 +#include "VideoCommon/FrameDumper.h"
++#include "VideoCommon/HiresTextures.h"
 +#include "VideoCommon/AsyncRequests.h"
 +#include "VideoCommon/OnScreenUI.h"
  #include "VideoCommon/PerformanceMetrics.h"
@@ -328,7 +377,7 @@ index 4579a77..83139e3 100644
  
  namespace {
  static_assert(sizeof(ModernGekkoModuleDesc) == sizeof(StaticRecompModuleDesc));
-@@ -51,41 +82,1917 @@ std::unique_ptr<BootSessionData> s_boot_session_data;
+@@ -51,41 +84,2050 @@ std::unique_ptr<BootSessionData> s_boot_session_data;
  u64 s_previous_net_wait_ns = 0;
  double s_net_wait_ms_per_second = 0.0;
  std::chrono::steady_clock::time_point s_previous_net_wait_sample;
@@ -376,6 +425,7 @@ index 4579a77..83139e3 100644
 +  std::atomic<bool> overlay_visible{true};
 +  std::atomic<bool> widescreen_enabled{false};
 +  std::atomic<bool> hires_textures_enabled{false};
++  std::atomic<bool> community_hd_texture_pack_enabled{false};
 +  std::atomic<bool> dump_textures_enabled{false};
 +  std::atomic<bool> text_upscale_enabled{false};
 +  std::atomic<bool> input_overlay_enabled{false};
@@ -389,6 +439,10 @@ index 4579a77..83139e3 100644
 +  std::atomic<int> autosave_slots{5};
 +  std::atomic<bool> menu_active{false};
 +  std::atomic<bool> authored_menu_active{false};
++  std::atomic<bool> authored_projection_active{false};
++  std::atomic<bool> movie_active{false};
++  std::atomic<bool> live_title_scene_active{false};
++  std::atomic<int> authored_backdrop{0};
 +  std::atomic<bool> pda_active{false};
 +  std::atomic<bool> field_overlay_active{false};
 +  std::atomic<u32> active_ui_message_id{0};
@@ -406,8 +460,13 @@ index 4579a77..83139e3 100644
 +  bool collision_valid = false;
 +  std::atomic<bool> ultrawide_gameplay_started{false};
 +  bool menu_aspect_active = false;
++  bool menu_projection_active = false;
++  bool naming_presentation_active = false;
 +  bool field_aspect_active = false;
++  bool movie_aspect_active = false;
++  std::atomic<bool> menu_edge_fill_active{false};
 +  bool field_overlay_session_active = false;
++  bool battle_gameplay_session_active = false;
 +  u32 pyrite_sky_root = 0;
 +  u32 pyrite_sky_original_translate_y = 0;
 +  bool pyrite_sky_offset_active = false;
@@ -1181,6 +1240,8 @@ index 4579a77..83139e3 100644
 +                              std::memory_order_relaxed);
 +  Config::SetCurrent(Config::GFX_WIDESCREEN_HUD_SAFE_AREA,
 +                     gameplay_ultrawide);
++  Config::SetCurrent(Config::GFX_WIDESCREEN_AUTHORED_MENU, false);
++  Config::SetCurrent(Config::GFX_COLOSSEUM_NAMING_PRESENTATION, false);
 +  Config::SetCurrent(
 +      Config::GFX_WIDESCREEN_HUD_SAFE_AREA_SCALE,
 +      gameplay_ultrawide ? NativeHudSafeAreaScale(GetNativeUltrawideTarget()) :
@@ -1235,6 +1296,67 @@ index 4579a77..83139e3 100644
 +  int scanline_spacing = 4;
 +  int scanline_thickness = 1;
 +};
++
++PdaBackgroundLayout GetPdaBackgroundLayout(int width, int height);
++
++void DrawAuthoredBackdropMargins(NavigationOverlayState& state)
++{
++  const auto backdrop =
++      static_cast<moderngekko::automation::ColosseumAuthoredBackdrop>(
++      state.authored_backdrop.load(std::memory_order_acquire));
++  if (backdrop == moderngekko::automation::ColosseumAuthoredBackdrop::None)
++    return;
++
++  const ImVec2 display = ImGui::GetIO().DisplaySize;
++  const int width = static_cast<int>(std::lround(display.x));
++  const int height = static_cast<int>(std::lround(display.y));
++  const int side_width =
++      backdrop == moderngekko::automation::ColosseumAuthoredBackdrop::Naming ?
++          moderngekko::automation::ResolveColosseumNamingBackdropSideWidth(width, height) :
++          moderngekko::automation::ResolveColosseumAuthoredCanvasSideWidth(width, height);
++  if (side_width < 1)
++    return;
++
++  ImDrawList* const overlay = ImGui::GetForegroundDrawList();
++  const float left = static_cast<float>(side_width);
++  const float right = display.x - left;
++  const ImU32 dark = IM_COL32(0, 81, 148, 255);
++  const ImU32 light = IM_COL32(0, 109, 198, 255);
++  overlay->AddRectFilled({0.0f, 0.0f}, {left, display.y}, dark);
++  overlay->AddRectFilled({right, 0.0f}, display, dark);
++
++  if (backdrop == moderngekko::automation::ColosseumAuthoredBackdrop::Naming)
++  {
++    int light_start = -1;
++    for (int y = 0; y <= height; ++y)
++    {
++      const bool light_band = y < height &&
++                              moderngekko::automation::
++                                  IsColosseumNamingBackdropLightBand(y, height);
++      if (light_band && light_start < 0)
++      {
++        light_start = y;
++      }
++      else if (!light_band && light_start >= 0)
++      {
++        overlay->AddRectFilled({0.0f, static_cast<float>(light_start)},
++                               {left, static_cast<float>(y)}, light);
++        overlay->AddRectFilled({right, static_cast<float>(light_start)},
++                               {display.x, static_cast<float>(y)}, light);
++        light_start = -1;
++      }
++    }
++    return;
++  }
++
++  const float band_height = std::max(display.y / 120.0f, 1.0f);
++  for (float y = band_height; y < display.y; y += band_height * 2.0f)
++  {
++    const float end = std::min(y + band_height, display.y);
++    overlay->AddRectFilled({0.0f, y}, {left, end}, light);
++    overlay->AddRectFilled({right, y}, {display.x, end}, light);
++  }
++}
 +
 +PdaBackgroundLayout GetPdaBackgroundLayout(int width, int height)
 +{
@@ -1323,6 +1445,7 @@ index 4579a77..83139e3 100644
 +  if (!state)
 +    return;
 +
++  DrawAuthoredBackdropMargins(*state);
 +  DrawInputOverlay(*state);
 +
 +  if (state->pda_active.load(std::memory_order_acquire))
@@ -1977,19 +2100,7 @@ index 4579a77..83139e3 100644
 +      saved = frontend_ini.Save(state->frontend_config_path.string());
 +    }
 +  }
- 
--std::string FormatWindowTitle(const std::string &title, double fps) {
--  if (!std::isfinite(fps) || fps < 0.0)
--    fps = 0.0;
--  const auto now = std::chrono::steady_clock::now();
--  std::string formatted_title = fmt::format("{} | {:.1f} FPS", title, fps);
--  const NetPlay::InputWaitTelemetry telemetry =
--      NetPlay::NetPlayClient::GetInputWaitTelemetry();
--  if (!telemetry.active) {
--    s_previous_net_wait_ns = 0;
--    s_net_wait_ms_per_second = 0.0;
--    s_previous_net_wait_sample = {};
--    return formatted_title;
++
 +  std::lock_guard lock(state->mutex);
 +  state->ui_status =
 +      enabled ? "High-resolution text enabled" : "High-resolution text disabled";
@@ -2036,23 +2147,7 @@ index 4579a77..83139e3 100644
 +      ini.GetOrCreateSection("Video")->Set("navigation_overlay", mode);
 +      ini.Save(state->frontend_config_path.string());
 +    }
-   }
--  if (s_previous_net_wait_sample.time_since_epoch().count() == 0) {
--    s_previous_net_wait_sample = now;
--    s_previous_net_wait_ns = telemetry.total_wait_ns;
--  } else if (telemetry.total_wait_ns < s_previous_net_wait_ns) {
--    s_previous_net_wait_sample = now;
--    s_previous_net_wait_ns = telemetry.total_wait_ns;
--    s_net_wait_ms_per_second = 0.0;
--  } else if (now - s_previous_net_wait_sample >=
--             std::chrono::milliseconds(500)) {
--    const double seconds =
--        std::chrono::duration<double>(now - s_previous_net_wait_sample).count();
--    s_net_wait_ms_per_second =
--        static_cast<double>(telemetry.total_wait_ns - s_previous_net_wait_ns) /
--        1000000.0 / seconds;
--    s_previous_net_wait_sample = now;
--    s_previous_net_wait_ns = telemetry.total_wait_ns;
++  }
 +  std::lock_guard lock(state->mutex);
 +  state->ui_status =
 +      visible ? "Navigation map shown" : "Navigation map hidden";
@@ -2083,13 +2178,23 @@ index 4579a77..83139e3 100644
 +      ini.GetOrCreateSection("Video")->Set("input_overlay", enabled);
 +      ini.Save(state->frontend_config_path.string());
 +    }
-   }
--  return fmt::format("{} | Net wait {:.1f} ms/s | Buffer {}", formatted_title,
--                     s_net_wait_ms_per_second, telemetry.buffer_size);
++  }
 +  std::lock_guard lock(state->mutex);
 +  state->ui_status = enabled ? "Input overlay shown" : "Input overlay hidden";
 +}
-+
+ 
+-std::string FormatWindowTitle(const std::string &title, double fps) {
+-  if (!std::isfinite(fps) || fps < 0.0)
+-    fps = 0.0;
+-  const auto now = std::chrono::steady_clock::now();
+-  std::string formatted_title = fmt::format("{} | {:.1f} FPS", title, fps);
+-  const NetPlay::InputWaitTelemetry telemetry =
+-      NetPlay::NetPlayClient::GetInputWaitTelemetry();
+-  if (!telemetry.active) {
+-    s_previous_net_wait_ns = 0;
+-    s_net_wait_ms_per_second = 0.0;
+-    s_previous_net_wait_sample = {};
+-    return formatted_title;
 +bool Host_IsMinimapHighContrastEnabled()
 +{
 +  NavigationOverlayState* const state =
@@ -2124,7 +2229,23 @@ index 4579a77..83139e3 100644
 +        ini.GetOrCreateSection("Video")->Set("navigation_overlay", mode);
 +      ini.Save(state->frontend_config_path.string());
 +    }
-+  }
+   }
+-  if (s_previous_net_wait_sample.time_since_epoch().count() == 0) {
+-    s_previous_net_wait_sample = now;
+-    s_previous_net_wait_ns = telemetry.total_wait_ns;
+-  } else if (telemetry.total_wait_ns < s_previous_net_wait_ns) {
+-    s_previous_net_wait_sample = now;
+-    s_previous_net_wait_ns = telemetry.total_wait_ns;
+-    s_net_wait_ms_per_second = 0.0;
+-  } else if (now - s_previous_net_wait_sample >=
+-             std::chrono::milliseconds(500)) {
+-    const double seconds =
+-        std::chrono::duration<double>(now - s_previous_net_wait_sample).count();
+-    s_net_wait_ms_per_second =
+-        static_cast<double>(telemetry.total_wait_ns - s_previous_net_wait_ns) /
+-        1000000.0 / seconds;
+-    s_previous_net_wait_sample = now;
+-    s_previous_net_wait_ns = telemetry.total_wait_ns;
 +  std::lock_guard lock(state->mutex);
 +  state->ui_status = enabled ? "High-contrast map enabled" :
 +                               "High-contrast map disabled";
@@ -2135,6 +2256,67 @@ index 4579a77..83139e3 100644
 +  NavigationOverlayState* const state =
 +      s_navigation_overlay_state.load(std::memory_order_acquire);
 +  return state && state->fast_forward_enabled.load(std::memory_order_relaxed);
++}
++
++bool Host_IsCommunityHdTexturePackEnabled()
++{
++  NavigationOverlayState* const state =
++      s_navigation_overlay_state.load(std::memory_order_acquire);
++  return state && state->community_hd_texture_pack_enabled.load(std::memory_order_relaxed);
++}
++
++void Host_ToggleCommunityHdTexturePack()
++{
++  NavigationOverlayState* const state =
++      s_navigation_overlay_state.load(std::memory_order_acquire);
++  if (!state)
++    return;
++
++  const bool enabled =
++      !state->community_hd_texture_pack_enabled.load(std::memory_order_relaxed);
++  std::string error;
++  if (!moderngekko::SetCommunityHdTexturePackEnabled(
++          state->frontend_config_path.parent_path(), enabled, &error))
++  {
++    std::lock_guard lock(state->mutex);
++    state->ui_status = "HD texture pack: " + error;
++    return;
+   }
+-  return fmt::format("{} | Net wait {:.1f} ms/s | Buffer {}", formatted_title,
+-                     s_net_wait_ms_per_second, telemetry.buffer_size);
++
++  state->community_hd_texture_pack_enabled.store(enabled, std::memory_order_relaxed);
++  if (enabled)
++  {
++    Config::SetCurrent(Config::GFX_HIRES_TEXTURES, true);
++    state->hires_textures_enabled.store(true, std::memory_order_relaxed);
++  }
++  HiresTexture::Update();
++  AsyncRequests::GetInstance()->PushEvent([] {
++    if (g_texture_cache)
++      g_texture_cache->Invalidate();
++  });
++
++  bool saved = false;
++  if (!state->frontend_config_path.empty())
++  {
++    Common::IniFile frontend_ini;
++    if (frontend_ini.Load(state->frontend_config_path.string()))
++    {
++      auto* const video = frontend_ini.GetOrCreateSection("Video");
++      video->Set("community_hd_texture_pack", enabled);
++      if (enabled)
++        video->Set("hires_textures", true);
++      saved = frontend_ini.Save(state->frontend_config_path.string());
++    }
++  }
++
++  std::lock_guard lock(state->mutex);
++  state->ui_status = enabled ?
++                         "Community HD texture pack enabled (ModernGekko UI overrides active)" :
++                         "Community HD texture pack disabled";
++  if (!saved)
++    state->ui_status += " (session only)";
 +}
 +
 +bool Host_IsSixtyFpsEnabled()
@@ -2277,7 +2459,7 @@ index 4579a77..83139e3 100644
  
  std::vector<std::string> Host_GetPreferredLocales() { return {}; }
  void Host_PPCSymbolsChanged() {}
-@@ -140,12 +2047,652 @@ struct Runtime::Impl {
+@@ -140,12 +2182,660 @@ struct Runtime::Impl {
    std::unique_ptr<Platform> platform;
    std::unique_ptr<ModManager> mods;
    Common::EventHook state_hook;
@@ -2623,6 +2805,14 @@ index 4579a77..83139e3 100644
 +      impl.navigation_overlay.mode.load(std::memory_order_relaxed);
 +  status.navigation_valid =
 +      impl.navigation_overlay.valid.load(std::memory_order_acquire);
++  status.movie_active =
++      impl.navigation_overlay.movie_active.load(std::memory_order_acquire);
++  status.live_title_scene_active =
++      impl.navigation_overlay.live_title_scene_active.load(std::memory_order_acquire);
++  status.authored_menu_active =
++      impl.navigation_overlay.authored_menu_active.load(std::memory_order_acquire);
++  status.menu_edge_fill_active =
++      impl.navigation_overlay.menu_edge_fill_active.load(std::memory_order_relaxed);
 +  status.navigation_room_id =
 +      impl.navigation_overlay.room_id.load(std::memory_order_relaxed);
 +  status.navigation_player_x =
@@ -2930,7 +3120,7 @@ index 4579a77..83139e3 100644
  namespace detail {
  void SetExternalUICommon(bool external) {
    std::lock_guard lock(s_runtime_mutex);
-@@ -235,6 +2782,21 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -235,12 +2925,39 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    for (const LoadedModInfo &mod : mod_report.loaded)
      std::fprintf(stderr, "mod loaded: %s %s\n", mod.id.c_str(),
                   mod.version.c_str());
@@ -2952,7 +3142,25 @@ index 4579a77..83139e3 100644
  
    if (!s_external_ui_common) {
      UICommon::SetUserDirectory(impl->config.user_directory.string());
-@@ -281,6 +2843,26 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+     UICommon::Init();
+     impl->ui_initialized = true;
+   }
++  std::string community_pack_error;
++  if (!moderngekko::SetCommunityHdTexturePackEnabled(
++          impl->config.user_directory,
++          impl->config.graphics.community_hd_texture_pack,
++          &community_pack_error))
++  {
++    std::fprintf(stderr, "community HD texture pack unavailable: %s\n",
++                 community_pack_error.c_str());
++    impl->config.graphics.community_hd_texture_pack = false;
++  }
++  if (impl->config.graphics.community_hd_texture_pack)
++    impl->config.graphics.hires_textures = true;
+   Config::SetBase(Config::MAIN_FULLSCREEN, impl->config.fullscreen);
+ 
+   if (impl->config.headless)
+@@ -281,6 +2998,26 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    if (impl->config.graphics.internal_resolution_scale)
      Config::SetBase(Config::GFX_EFB_SCALE,
                      *impl->config.graphics.internal_resolution_scale);
@@ -2979,7 +3187,7 @@ index 4579a77..83139e3 100644
    Config::SetBase(Config::GFX_SHADER_CACHE, true);
    Config::SetBase(Config::GFX_SHADER_COMPILATION_MODE,
                    ShaderCompilationMode::AsynchronousUberShaders);
-@@ -304,6 +2886,12 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -304,6 +3041,12 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    Config::SetBase(Config::MAIN_AUDIO_BACKEND, impl->config.audio.backend);
    Config::SetBase(Config::MAIN_INPUT_BACKGROUND_INPUT,
                    impl->config.input.background_input);
@@ -2992,7 +3200,7 @@ index 4579a77..83139e3 100644
  
    auto &jit = Core::System::GetInstance().GetJitInterface();
    StaticRecompModuleSource recomp_source;
-@@ -332,11 +2920,25 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -332,11 +3075,25 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
  
  Runtime::~Runtime() {
    RequestStop();
@@ -3018,7 +3226,7 @@ index 4579a77..83139e3 100644
    if (m_impl->controllers_initialized)
      UICommon::ShutdownControllers();
    if (m_impl->ui_initialized)
-@@ -359,17 +2961,17 @@ RuntimeRunResult Runtime::Run() {
+@@ -359,17 +3116,17 @@ RuntimeRunResult Runtime::Run() {
      std::lock_guard lock(s_runtime_mutex);
      if (s_boot_session_data)
        boot = BootParameters::GenerateFromFile(
@@ -3040,7 +3248,7 @@ index 4579a77..83139e3 100644
      s_boot_session_data.reset();
    }
    if (!boot) {
-@@ -378,19 +2980,453 @@ RuntimeRunResult Runtime::Run() {
+@@ -378,19 +3135,526 @@ RuntimeRunResult Runtime::Run() {
              RuntimeError{RuntimeErrorCode::BootFailed,
                           "Dolphin rejected the extracted disc"}};
    }
@@ -3094,6 +3302,9 @@ index 4579a77..83139e3 100644
 +      std::memory_order_relaxed);
 +  m_impl->navigation_overlay.hires_textures_enabled.store(
 +      m_impl->config.graphics.hires_textures, std::memory_order_relaxed);
++  m_impl->navigation_overlay.community_hd_texture_pack_enabled.store(
++      m_impl->config.graphics.community_hd_texture_pack,
++      std::memory_order_relaxed);
 +  m_impl->navigation_overlay.dump_textures_enabled.store(
 +      m_impl->config.graphics.dump_textures, std::memory_order_relaxed);
 +  m_impl->navigation_overlay.text_upscale_enabled.store(
@@ -3168,12 +3379,18 @@ index 4579a77..83139e3 100644
 +          const bool authored_menu_active =
 +              m_impl->navigation_overlay.authored_menu_active.load(
 +                  std::memory_order_acquire);
++          const bool movie_active =
++              m_impl->navigation_overlay.movie_active.load(
++                  std::memory_order_acquire);
++          const bool live_title_scene_active =
++              m_impl->navigation_overlay.live_title_scene_active.load(
++                  std::memory_order_acquire);
 +          const bool gameplay_ultrawide =
 +              automation::ShouldUseColosseumUltrawideProjection(
 +                  widescreen_enabled,
 +                  m_impl->navigation_overlay.ultrawide_gameplay_started.load(
 +                      std::memory_order_relaxed),
-+                  authored_menu_active);
++                  authored_menu_active, live_title_scene_active, movie_active);
 +          const NativeUltrawideTarget target = GetNativeUltrawideTarget();
 +          const float guest_projection_aspect =
 +              gameplay_ultrawide ? target.aspect : kAuthoredGameAspect;
@@ -3199,6 +3416,8 @@ index 4579a77..83139e3 100644
 +          constexpr u32 dialogue_object_address = 0x80404AD8;
 +          constexpr u32 active_ui_text_address = 0x80402440;
 +          constexpr u32 active_ui_message_id_address = 0x80402436;
++          constexpr u32 movie_ready_address = 0x8047B440;
++          constexpr u32 movie_open_address = 0x8047B441;
 +          constexpr u32 actor_table = 0x8050EDF0;
 +          constexpr u32 actor_stride = 0x170;
 +          constexpr u32 actor_count = 32;
@@ -3257,9 +3476,20 @@ index 4579a77..83139e3 100644
 +          // discriminator to extend only the PDA scanline background.
 +          const u32 active_ui_message_id =
 +              memory.Read_U16(active_ui_message_id_address);
++          // THPPlayerGetState (fn_801E1874) returns active exactly when both
++          // of these stable player flags are non-zero. The title handle is
++          // populated only while the live-rendered title scene is resident.
++          const bool movie_active =
++              automation::IsColosseumMoviePlaybackActive(
++                  memory.Read_U8(movie_ready_address),
++                  memory.Read_U8(movie_open_address));
 +          const bool character_naming_active =
-+              automation::IsColosseumCharacterNamingMessage(
-+                  active_ui_message_id);
++              automation::IsColosseumCharacterNamingState(
++                  active_ui_message_id, menu_active);
++          const bool battle_now_active =
++              automation::IsColosseumBattleNowMenu(active_ui_message_id);
++          const bool battle_gameplay_message =
++              automation::IsColosseumBattleGameplayMessage(active_ui_message_id);
 +          const bool pda_message_active =
 +              menu_active && automation::IsColosseumPdaMessage(active_ui_message_id);
 +          if (pda_message_active)
@@ -3339,11 +3569,40 @@ index 4579a77..83139e3 100644
 +            if (script_state == 3 && script_pointer != 0)
 +              npcs.push_back({{actor_x, actor_z}, actor_index, archetype});
 +          }
++          m_impl->navigation_overlay.battle_gameplay_session_active =
++              automation::ResolveColosseumBattleGameplaySession(
++                  m_impl->navigation_overlay.battle_gameplay_session_active,
++                  battle_now_active, battle_gameplay_message, valid,
++                  character_naming_active, movie_active);
++          const bool battle_gameplay_active =
++              m_impl->navigation_overlay.battle_gameplay_session_active;
 +          const bool authored_menu_active =
 +              automation::ShouldUseColosseumAuthoredMenuPresentation(
-+                  complete_menu_active, valid, character_naming_active);
++                  complete_menu_active, valid, character_naming_active,
++                  m_impl->navigation_overlay.ultrawide_gameplay_started.load(
++                      std::memory_order_relaxed),
++                  battle_now_active, battle_gameplay_active);
++          const bool authored_projection_active =
++              character_naming_active;
++          const bool live_title_scene_active =
++              automation::IsColosseumLiveTitleSceneActive(
++                  movie_active, valid,
++                  character_naming_active || battle_now_active || battle_gameplay_active);
 +          m_impl->navigation_overlay.authored_menu_active.store(
 +              authored_menu_active, std::memory_order_release);
++          m_impl->navigation_overlay.authored_projection_active.store(
++              authored_projection_active, std::memory_order_release);
++          m_impl->navigation_overlay.movie_active.store(
++              movie_active, std::memory_order_release);
++          m_impl->navigation_overlay.live_title_scene_active.store(
++              live_title_scene_active, std::memory_order_release);
++          const auto authored_backdrop =
++              automation::ResolveColosseumAuthoredBackdrop(
++                  m_impl->navigation_overlay.widescreen_enabled.load(
++                      std::memory_order_relaxed),
++                  movie_active, character_naming_active);
++          m_impl->navigation_overlay.authored_backdrop.store(
++              static_cast<int>(authored_backdrop), std::memory_order_release);
 +          if (m_impl->navigation_overlay.input_overlay_enabled.load(
 +                  std::memory_order_relaxed))
 +          {
@@ -3372,17 +3631,20 @@ index 4579a77..83139e3 100644
 +                               NativeHudSafeAreaScale(target));
 +            Config::SetCurrent(Config::GFX_ASPECT_RATIO, AspectMode::Stretch);
 +          }
-+          if (widescreen_active &&
++          const bool gameplay_started =
 +              m_impl->navigation_overlay.ultrawide_gameplay_started.load(
-+                  std::memory_order_relaxed))
++                  std::memory_order_relaxed);
++          if (automation::ShouldApplyColosseumProjectionPresentation(
++                  widescreen_active, gameplay_started, authored_menu_active,
++                  live_title_scene_active, movie_active))
 +          {
 +            NativeUltrawideTarget target = GetNativeUltrawideTarget();
 +            const bool gameplay_ultrawide =
 +                automation::ShouldUseColosseumUltrawideProjection(
-+                    widescreen_active,
-+                    m_impl->navigation_overlay.ultrawide_gameplay_started.load(
-+                        std::memory_order_relaxed),
-+                    authored_menu_active);
++                    widescreen_active, gameplay_started,
++                    authored_menu_active, live_title_scene_active, movie_active);
++            const bool menu_edge_fill =
++                authored_backdrop != automation::ColosseumAuthoredBackdrop::None;
 +            // Menu compositing can temporarily expose an internal 16:9 or
 +            // 4:3 backbuffer even though the host window is still ultrawide.
 +            // Keep the last wider physical target so those transient surfaces
@@ -3403,21 +3665,40 @@ index 4579a77..83139e3 100644
 +            }
 +            if (authored_menu_active !=
 +                    m_impl->navigation_overlay.menu_aspect_active ||
++                authored_projection_active !=
++                    m_impl->navigation_overlay.menu_projection_active ||
++                character_naming_active !=
++                    m_impl->navigation_overlay.naming_presentation_active ||
 +                gameplay_ultrawide !=
-+                    m_impl->navigation_overlay.field_aspect_active)
++                    m_impl->navigation_overlay.field_aspect_active ||
++                movie_active !=
++                    m_impl->navigation_overlay.movie_aspect_active ||
++                menu_edge_fill !=
++                    m_impl->navigation_overlay.menu_edge_fill_active)
 +            {
 +              m_impl->navigation_overlay.menu_aspect_active = authored_menu_active;
++              m_impl->navigation_overlay.menu_projection_active =
++                  authored_projection_active;
++              m_impl->navigation_overlay.naming_presentation_active =
++                  character_naming_active;
 +              m_impl->navigation_overlay.field_aspect_active = gameplay_ultrawide;
++              m_impl->navigation_overlay.movie_aspect_active = movie_active;
++              m_impl->navigation_overlay.menu_edge_fill_active = menu_edge_fill;
 +              Config::SetCurrent(Config::GFX_WIDESCREEN_HUD_SAFE_AREA,
 +                                 gameplay_ultrawide);
++              Config::SetCurrent(Config::GFX_WIDESCREEN_AUTHORED_MENU,
++                                 authored_projection_active);
++              Config::SetCurrent(Config::GFX_COLOSSEUM_NAMING_PRESENTATION,
++                                 character_naming_active);
 +              Config::SetCurrent(
 +                  Config::GFX_ASPECT_RATIO,
-+                  authored_menu_active ? AspectMode::ForceStandard :
++                  (movie_active || authored_menu_active) ? AspectMode::ForceStandard :
 +                  gameplay_ultrawide ? AspectMode::Stretch :
 +                                       AspectMode::ForceWide);
 +            }
-+            // Complete field submenu canvases and character naming use their
-+            // authored projection together with ForceStandard presentation.
++            // Complete 2D menu canvases need ForceStandard presentation only.
++            // Character naming additionally contains a 3D model and therefore
++            // keeps the authored projection correction.
 +            const float guest_projection_aspect =
 +                gameplay_ultrawide ? target.aspect : kAuthoredGameAspect;
 +            const u32 projection_bits = std::bit_cast<u32>(
@@ -3494,7 +3775,7 @@ index 4579a77..83139e3 100644
    std::jthread title_thread;
    if (!m_impl->config.headless && m_impl->config.show_fps_in_title) {
      title_thread = std::jthread([](std::stop_token stop_token) {
-@@ -402,14 +3438,30 @@ RuntimeRunResult Runtime::Run() {
+@@ -402,14 +3666,30 @@ RuntimeRunResult Runtime::Run() {
      });
    }
    m_impl->platform->MainLoop();
@@ -3525,12 +3806,119 @@ index 4579a77..83139e3 100644
    return {};
  }
  
+diff --git a/src/runtime/hd_texture_pack.cpp b/src/runtime/hd_texture_pack.cpp
+new file mode 100644
+index 0000000..e1f1229
+--- /dev/null
++++ b/src/runtime/hd_texture_pack.cpp
+@@ -0,0 +1,101 @@
++#include "moderngekko/hd_texture_pack.hpp"
++
++#include <mutex>
++#include <string_view>
++
++#include "Common/CommonPaths.h"
++#include "Common/FileUtil.h"
++#include "UICommon/ResourcePack/Manager.h"
++#include "UICommon/ResourcePack/Manifest.h"
++#include "UICommon/UICommon.h"
++
++namespace moderngekko
++{
++namespace
++{
++std::mutex s_pack_mutex;
++
++bool IsColosseumHdPack(const ResourcePack::ResourcePack& pack)
++{
++  const ResourcePack::Manifest* const manifest = pack.GetManifest();
++  if (!manifest)
++    return false;
++
++  const bool matching_name =
++      manifest->GetName().find("Colosseum HD Pack") != std::string::npos;
++  const bool matching_author =
++      manifest->GetAuthors() && manifest->GetAuthors()->find("Sephie") != std::string::npos;
++  return matching_name && matching_author;
++}
++
++ResourcePack::ResourcePack* FindColosseumHdPack()
++{
++  for (ResourcePack::ResourcePack& pack : ResourcePack::GetPacks())
++  {
++    if (IsColosseumHdPack(pack))
++      return &pack;
++  }
++  return nullptr;
++}
++
++CommunityHdTexturePackStatus QueryStatus(const std::filesystem::path& user_directory)
++{
++  UICommon::SetUserDirectory(user_directory.string());
++  const bool all_packs_valid = ResourcePack::Init();
++  ResourcePack::ResourcePack* const pack = FindColosseumHdPack();
++
++  CommunityHdTexturePackStatus status;
++  if (!pack)
++  {
++    if (!all_packs_valid)
++      status.error = "One or more resource-pack archives are invalid.";
++    return status;
++  }
++
++  status.available = true;
++  status.installed = ResourcePack::IsInstalled(*pack);
++  status.texture_count = pack->GetTextures().size();
++  status.name = pack->GetManifest()->GetName();
++  status.version = pack->GetManifest()->GetVersion();
++  return status;
++}
++}  // namespace
++
++CommunityHdTexturePackStatus
++GetCommunityHdTexturePackStatus(const std::filesystem::path& user_directory)
++{
++  std::scoped_lock lock(s_pack_mutex);
++  return QueryStatus(user_directory);
++}
++
++bool SetCommunityHdTexturePackEnabled(const std::filesystem::path& user_directory,
++                                      bool enabled, std::string* error)
++{
++  std::scoped_lock lock(s_pack_mutex);
++  const CommunityHdTexturePackStatus status = QueryStatus(user_directory);
++  ResourcePack::ResourcePack* const pack = FindColosseumHdPack();
++
++  if (!pack)
++  {
++    if (!enabled)
++      return true;
++    if (error)
++      *error = status.error.empty() ?
++                   "Pokemon Colosseum HD Pack.zip is missing from User/ResourcePacks." :
++                   status.error;
++    return false;
++  }
++
++  if (status.installed == enabled)
++    return true;
++
++  const bool succeeded = enabled ? pack->Install(File::GetUserPath(D_LOAD_IDX)) :
++                                   pack->Uninstall(File::GetUserPath(D_LOAD_IDX));
++  if (!succeeded && error)
++  {
++    *error = pack->GetError().empty() ? "The HD texture pack operation failed." :
++                                       pack->GetError();
++  }
++  return succeeded;
++}
++}  // namespace moderngekko
 diff --git a/tests/automation_protocol_test.cpp b/tests/automation_protocol_test.cpp
 new file mode 100644
-index 0000000..4989a04
+index 0000000..3a42d88
 --- /dev/null
 +++ b/tests/automation_protocol_test.cpp
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,337 @@
 +#include "automation_protocol.hpp"
 +
 +#include <filesystem>
@@ -3553,6 +3941,44 @@ index 0000000..4989a04
 +{
 +  namespace automation = moderngekko::automation;
 +
++  if (automation::ResolveColosseumAuthoredCanvasSideWidth(5120, 1440) != 1600 ||
++      automation::ResolveColosseumAuthoredCanvasSideWidth(5119, 1439) != 1600 ||
++      automation::ResolveColosseumAuthoredCanvasSideWidth(1920, 1080) != 240 ||
++      automation::ResolveColosseumAuthoredCanvasSideWidth(1280, 960) != 0 ||
++      automation::ResolveColosseumAuthoredCanvasSideWidth(0, 1440) != 0)
++  {
++    return 18;
++  }
++
++  if (automation::ResolveColosseumNamingBackdropSideWidth(5120, 1440) != 1657 ||
++      automation::ResolveColosseumNamingBackdropSideWidth(5119, 1439) != 1657 ||
++      automation::ResolveColosseumNamingBackdropSideWidth(1920, 1080) != 282 ||
++      automation::ResolveColosseumNamingBackdropSideWidth(1280, 960) != 38 ||
++      automation::ResolveColosseumNamingBackdropSideWidth(0, 1440) != 0)
++  {
++    return 19;
++  }
++
++  // The naming background's bottom quad restarts the four-row stripe pattern
++  // at authored row 367. The ultrawide fill must reproduce that one-row phase
++  // advance at both exact 3x height and the 1439-line borderless presentation.
++  if (automation::IsColosseumNamingBackdropLightBand(0, 1439) ||
++      automation::IsColosseumNamingBackdropLightBand(11, 1439) ||
++      !automation::IsColosseumNamingBackdropLightBand(12, 1439) ||
++      !automation::IsColosseumNamingBackdropLightBand(1100, 1439) ||
++      automation::IsColosseumNamingBackdropLightBand(1101, 1439) ||
++      automation::IsColosseumNamingBackdropLightBand(1112, 1439) ||
++      !automation::IsColosseumNamingBackdropLightBand(1113, 1439) ||
++      !automation::IsColosseumNamingBackdropLightBand(1436, 1439) ||
++      automation::IsColosseumNamingBackdropLightBand(1437, 1439) ||
++      !automation::IsColosseumNamingBackdropLightBand(1100, 1440) ||
++      automation::IsColosseumNamingBackdropLightBand(1101, 1440) ||
++      automation::IsColosseumNamingBackdropLightBand(-1, 1440) ||
++      automation::IsColosseumNamingBackdropLightBand(0, 0))
++  {
++    return 20;
++  }
++
 +  if (!automation::IsColosseumFieldMenuMessage(0x013a) ||
 +      !automation::IsColosseumFieldMenuMessage(0x013d) ||
 +      automation::IsColosseumFieldMenuMessage(0x0139) ||
@@ -3572,6 +3998,27 @@ index 0000000..4989a04
 +      automation::IsColosseumCharacterNamingMessage(0x006a) ||
 +      automation::IsColosseumCharacterNamingMessage(0x2efc) ||
 +      automation::IsColosseumCharacterNamingMessage(0x2efe) ||
++      !automation::IsColosseumCharacterNamingState(0x2efd, false) ||
++      !automation::IsColosseumCharacterNamingState(0x2efd, true) ||
++      automation::IsColosseumCharacterNamingState(0x0069, false) ||
++      !automation::IsColosseumCharacterNamingState(0x0069, true) ||
++      !automation::IsColosseumBattleNowMenu(0x3d6c) ||
++      automation::IsColosseumBattleNowMenu(0x3d6b) ||
++      !automation::IsColosseumBattleGameplayMessage(0x013e) ||
++      !automation::IsColosseumBattleGameplayMessage(0x00cf) ||
++      !automation::IsColosseumBattleGameplayMessage(0x00d0) ||
++      !automation::IsColosseumBattleGameplayMessage(0x00e7) ||
++      automation::IsColosseumBattleGameplayMessage(0x00ce) ||
++      automation::IsColosseumBattleGameplayMessage(0x00e6) ||
++      automation::IsColosseumBattleGameplayMessage(0x013d) ||
++      automation::IsColosseumBattleGameplayMessage(0x013f) ||
++      !automation::IsColosseumMoviePlaybackActive(1, 1) ||
++      automation::IsColosseumMoviePlaybackActive(0, 1) ||
++      automation::IsColosseumMoviePlaybackActive(1, 0) ||
++      !automation::IsColosseumLiveTitleSceneActive(false, false, false) ||
++      automation::IsColosseumLiveTitleSceneActive(true, false, false) ||
++      automation::IsColosseumLiveTitleSceneActive(false, true, false) ||
++      automation::IsColosseumLiveTitleSceneActive(false, false, true) ||
 +      automation::ResolveColosseumNavigationOverlayMode(0, false) != 0 ||
 +      automation::ResolveColosseumNavigationOverlayMode(0, true) != 1 ||
 +      automation::ResolveColosseumNavigationOverlayMode(1, true) != 1 ||
@@ -3585,10 +4032,44 @@ index 0000000..4989a04
 +      automation::ShouldUseColosseumAuthoredMenuPresentation(false, true, false) ||
 +      automation::ShouldUseColosseumAuthoredMenuPresentation(false, true, true) ||
 +      !automation::ShouldUseColosseumAuthoredMenuPresentation(false, false, true) ||
++      !automation::ShouldUseColosseumAuthoredMenuPresentation(true, false, false, true) ||
++      automation::ShouldUseColosseumAuthoredMenuPresentation(false, false, false, true) ||
++      !automation::ShouldUseColosseumAuthoredMenuPresentation(
++          false, false, false, true, true) ||
++      automation::ShouldUseColosseumAuthoredMenuPresentation(
++          true, false, false, true, false, true) ||
++      !automation::ResolveColosseumBattleGameplaySession(
++          false, false, true, false, false, false) ||
++      !automation::ResolveColosseumBattleGameplaySession(
++          true, false, false, false, false, false) ||
++      automation::ResolveColosseumBattleGameplaySession(
++          true, true, false, false, false, false) ||
++      automation::ResolveColosseumBattleGameplaySession(
++          true, false, false, true, false, false) ||
++      automation::ResolveColosseumBattleGameplaySession(
++          true, false, false, false, true, false) ||
++      automation::ResolveColosseumBattleGameplaySession(
++          true, false, false, false, false, true) ||
 +      !automation::ShouldUseColosseumUltrawideProjection(true, true, false) ||
 +      automation::ShouldUseColosseumUltrawideProjection(true, true, true) ||
 +      automation::ShouldUseColosseumUltrawideProjection(true, false, false) ||
 +      automation::ShouldUseColosseumUltrawideProjection(false, true, false) ||
++      !automation::ShouldUseColosseumUltrawideProjection(true, false, false, true, false) ||
++      automation::ShouldUseColosseumUltrawideProjection(true, false, false, true, true) ||
++      !automation::ShouldApplyColosseumProjectionPresentation(true, true, false) ||
++      !automation::ShouldApplyColosseumProjectionPresentation(true, false, true) ||
++      !automation::ShouldApplyColosseumProjectionPresentation(true, false, false, true, false) ||
++      !automation::ShouldApplyColosseumProjectionPresentation(true, false, false, false, true) ||
++      automation::ShouldApplyColosseumProjectionPresentation(true, false, false) ||
++      automation::ShouldApplyColosseumProjectionPresentation(false, true, true) ||
++      automation::ResolveColosseumAuthoredBackdrop(true, false, true) !=
++          automation::ColosseumAuthoredBackdrop::Naming ||
++      automation::ResolveColosseumAuthoredBackdrop(true, false, false) !=
++          automation::ColosseumAuthoredBackdrop::None ||
++      automation::ResolveColosseumAuthoredBackdrop(false, false, true) !=
++          automation::ColosseumAuthoredBackdrop::None ||
++      automation::ResolveColosseumAuthoredBackdrop(true, true, true) !=
++          automation::ColosseumAuthoredBackdrop::None ||
 +      !automation::ShouldOffsetColosseumPyriteSky(true, true, false, 0x0f,
 +                                                  "M2_out") ||
 +      automation::ShouldOffsetColosseumPyriteSky(false, true, false, 0x0f,
@@ -3678,6 +4159,10 @@ index 0000000..4989a04
 +      !formatted.contains("present_count=121\n") ||
 +      !formatted.contains("navigation_mode=2\n") ||
 +      !formatted.contains("navigation_valid=1\n") ||
++      !formatted.contains("movie_active=0\n") ||
++      !formatted.contains("live_title_scene_active=0\n") ||
++      !formatted.contains("authored_menu_active=0\n") ||
++      !formatted.contains("menu_edge_fill_active=0\n") ||
 +      !formatted.contains("navigation_room_id=3\n") ||
 +      !formatted.contains("navigation_player_x=-13\n") ||
 +      !formatted.contains("navigation_collision_valid=1\n") ||
@@ -3771,12 +4256,92 @@ index 0000000..4989a04
 +  std::filesystem::remove_all(root, ec);
 +  return 0;
 +}
+diff --git a/tests/colosseum_projection_test.cpp b/tests/colosseum_projection_test.cpp
+new file mode 100644
+index 0000000..183be53
+--- /dev/null
++++ b/tests/colosseum_projection_test.cpp
+@@ -0,0 +1,74 @@
++#include "VideoCommon/ColosseumProjection.h"
++
++#include <cmath>
++#include <limits>
++
++namespace
++{
++bool NearlyEqual(float left, float right)
++{
++  return std::abs(left - right) < 0.0001f;
++}
++}
++
++int main()
++{
++  using VideoCommon::GetColosseumAuthoredMenuHorizontalScale;
++  using VideoCommon::GetColosseumNamingHorizontalScale;
++  using VideoCommon::GetColosseumPresentationAspect;
++  using VideoCommon::IsColosseumSquareOffscreenViewport;
++
++  if (!NearlyEqual(VideoCommon::COLOSSEUM_AUTHORED_MENU_MINIMUM_SCALE,
++                   4.0f / 3.0f))
++  {
++    return 4;
++  }
++
++  if (!NearlyEqual(GetColosseumAuthoredMenuHorizontalScale(32.0f / 9.0f, false), 1.0f) ||
++      !NearlyEqual(GetColosseumAuthoredMenuHorizontalScale(0.0f, true), 1.0f) ||
++      !NearlyEqual(GetColosseumAuthoredMenuHorizontalScale(
++                       std::numeric_limits<float>::infinity(), true),
++                   1.0f))
++  {
++    return 1;
++  }
++
++  if (!NearlyEqual(GetColosseumAuthoredMenuHorizontalScale(4.0f / 3.0f, true), 1.0f) ||
++      !NearlyEqual(GetColosseumAuthoredMenuHorizontalScale(16.0f / 9.0f, true),
++                   4.0f / 3.0f) ||
++      !NearlyEqual(GetColosseumAuthoredMenuHorizontalScale(32.0f / 9.0f, true),
++                   8.0f / 3.0f))
++  {
++    return 2;
++  }
++
++  if (!IsColosseumSquareOffscreenViewport(192.0f, -192.0f) ||
++      !IsColosseumSquareOffscreenViewport(-128.0f, 128.0f) ||
++      IsColosseumSquareOffscreenViewport(320.0f, -240.0f) ||
++      IsColosseumSquareOffscreenViewport(16.0f, -16.0f) ||
++      IsColosseumSquareOffscreenViewport(std::numeric_limits<float>::infinity(), 192.0f))
++  {
++    return 3;
++  }
++
++  // Colosseum's VI exposes only 602 of the 640 authored horizontal pixels.
++  // Authored menus need the full 640:480 presentation so boundary artwork and
++  // dialogue frames survive instead of being squeezed into a 602:480 aperture.
++  if (!NearlyEqual(GetColosseumPresentationAspect(602.0f / 480.0f, false),
++                   602.0f / 480.0f) ||
++      !NearlyEqual(GetColosseumPresentationAspect(602.0f / 480.0f, true),
++                   4.0f / 3.0f) ||
++      !NearlyEqual(GetColosseumPresentationAspect(16.0f / 9.0f, true),
++                   4.0f / 3.0f))
++  {
++    return 5;
++  }
++
++  if (!NearlyEqual(GetColosseumNamingHorizontalScale(false), 1.0f) ||
++      !NearlyEqual(GetColosseumNamingHorizontalScale(true), 602.0f / 640.0f))
++  {
++    return 6;
++  }
++
++  return 0;
++}
 diff --git a/tests/colosseum_text_upscale_test.cpp b/tests/colosseum_text_upscale_test.cpp
 new file mode 100644
-index 0000000..d7330a2
+index 0000000..b952a67
 --- /dev/null
 +++ b/tests/colosseum_text_upscale_test.cpp
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,63 @@
 +#include "VideoCommon/ColosseumTextUpscale.h"
 +
 +#include <cmath>
@@ -3784,7 +4349,7 @@ index 0000000..d7330a2
 +int main()
 +{
 +  const auto enabled = ColosseumTextUpscale::GetPlan(true, true, false, 512, 512, 1, 0);
-+  if (!enabled.enabled || enabled.width != 2048 || enabled.height != 2048 ||
++  if (!enabled.enabled || enabled.width != 3072 || enabled.height != 3072 ||
 +      enabled.filter != ColosseumTextUpscale::Filter::Coverage)
 +    return 1;
 +
@@ -3799,7 +4364,7 @@ index 0000000..d7330a2
 +
 +  const auto battle_hud = ColosseumTextUpscale::GetPlan(
 +      true, false, true, 256, 239, 1, ColosseumTextUpscale::BATTLE_STATUS_ATLAS_HASH);
-+  if (!battle_hud.enabled || battle_hud.width != 1024 || battle_hud.height != 956 ||
++  if (!battle_hud.enabled || battle_hud.width != 1536 || battle_hud.height != 1434 ||
 +      battle_hud.filter != ColosseumTextUpscale::Filter::ColorCoverage)
 +    return 10;
 +  if (ColosseumTextUpscale::GetPlan(true, false, true, 256, 239, 1, 0).enabled)
@@ -3809,32 +4374,48 @@ index 0000000..d7330a2
 +          .enabled)
 +    return 12;
 +
-+  // The coverage pass must preserve transparent counters inside glyphs while tightening both
-+  // sides of their contours. This guards against dilation-style sharpening that fills O/P/B/8.
-+  if (ColosseumTextUpscale::SharpenCoverage(0.0f) != 0.0f ||
-+      ColosseumTextUpscale::SharpenCoverage(1.0f) != 1.0f)
++  // The coverage pass must preserve transparent counters while retaining an antialiased ramp.
++  // This guards against threshold-style sharpening that exposes native texel squares.
++  if (ColosseumTextUpscale::ReconstructCoverage(0.0f) != 0.0f ||
++      ColosseumTextUpscale::ReconstructCoverage(1.0f) != 1.0f)
 +    return 6;
-+  if (ColosseumTextUpscale::SharpenCoverage(0.1f) != 0.0f ||
-+      ColosseumTextUpscale::SharpenCoverage(0.9f) != 1.0f)
++  if (ColosseumTextUpscale::ReconstructCoverage(0.39f) != 0.0f ||
++      ColosseumTextUpscale::ReconstructCoverage(0.69f) != 1.0f)
 +    return 7;
-+  if (ColosseumTextUpscale::SharpenCoverage(0.34f) != 0.0f ||
-+      ColosseumTextUpscale::SharpenCoverage(0.66f) != 1.0f)
++  if (ColosseumTextUpscale::ReconstructCoverage(0.41f) <= 0.0f ||
++      ColosseumTextUpscale::ReconstructCoverage(0.67f) >= 1.0f)
 +    return 8;
-+  if (std::abs(ColosseumTextUpscale::SharpenCoverage(0.5f) - 0.5f) > 0.0001f)
++  if (std::abs(ColosseumTextUpscale::ReconstructCoverage(0.54f) - 0.5f) > 0.0001f)
 +    return 9;
++
++  // Nine normalized taps must retain a flat field and the source's 50% contour.
++  if (std::abs(ColosseumTextUpscale::CombineCoverage(1.0f, 4.0f, 4.0f) - 1.0f) >
++          0.0001f ||
++      std::abs(ColosseumTextUpscale::CombineCoverage(0.5f, 2.0f, 2.0f) - 0.5f) >
++          0.0001f)
++    return 13;
++
++  // An empty counter texel must remain transparent even when all eight neighboring texels are
++  // opaque. Conversely, an opaque center must remain opaque without neighbor support.
++  if (ColosseumTextUpscale::ReconstructCoverage(
++          ColosseumTextUpscale::CombineCoverage(0.0f, 4.0f, 4.0f)) != 0.0f ||
++      ColosseumTextUpscale::ReconstructCoverage(
++          ColosseumTextUpscale::CombineCoverage(1.0f, 0.0f, 0.0f)) != 1.0f)
++    return 14;
 +
 +  return 0;
 +}
 diff --git a/tests/frontend_config_test.cpp b/tests/frontend_config_test.cpp
-index 6bb9e0e..dc0041f 100644
+index 6bb9e0e..5803253 100644
 --- a/tests/frontend_config_test.cpp
 +++ b/tests/frontend_config_test.cpp
-@@ -29,13 +29,37 @@ int main() {
+@@ -29,13 +29,39 @@ int main() {
    const auto loaded = moderngekko::frontend::LoadConfig(directory, false);
    if (!loaded || loaded.dolphin_scale != 3 || loaded.show_fps_in_title ||
        loaded.controller != controller ||
 -      loaded.graphics_backend != "Vulkan") {
 +      loaded.graphics_backend != "Vulkan" || loaded.hires_textures ||
++      loaded.community_hd_texture_pack ||
 +      loaded.text_upscale || loaded.native_ultrawide || loaded.sixty_fps ||
 +      loaded.fast_forward) {
      return 2;
@@ -3851,6 +4432,7 @@ index 6bb9e0e..dc0041f 100644
 +  netplay_config.osd_font_size = 24;
 +  netplay_config.navigation_overlay = 2;
 +  netplay_config.hires_textures = true;
++  netplay_config.community_hd_texture_pack = true;
 +  netplay_config.cache_hires_textures = true;
 +  netplay_config.dump_textures = true;
 +  netplay_config.text_upscale = true;
@@ -3868,7 +4450,7 @@ index 6bb9e0e..dc0041f 100644
    netplay_config.controllers = {controller, "SDL/1/Second Controller"};
    netplay_config.controller = controller;
    netplay_config.netplay_nickname = "Kirby";
-@@ -53,6 +77,27 @@ int main() {
+@@ -53,6 +79,28 @@ int main() {
        netplay_loaded.netplay_port != 34567 ||
        netplay_loaded.netplay_buffer != "auto" ||
        netplay_loaded.graphics_backend != "OGL" ||
@@ -3880,6 +4462,7 @@ index 6bb9e0e..dc0041f 100644
 +      netplay_loaded.osd_font_size != 24 ||
 +      netplay_loaded.navigation_overlay != 2 ||
 +      !netplay_loaded.hires_textures ||
++      !netplay_loaded.community_hd_texture_pack ||
 +      !netplay_loaded.cache_hires_textures ||
 +      !netplay_loaded.dump_textures ||
 +      !netplay_loaded.text_upscale ||
@@ -3896,7 +4479,7 @@ index 6bb9e0e..dc0041f 100644
        !netplay_loaded.fullscreen) {
      return 7;
    }
-@@ -69,6 +114,50 @@ int main() {
+@@ -69,6 +117,50 @@ int main() {
    invalid_netplay.graphics_backend = "Direct3D 9";
    if (moderngekko::frontend::SaveConfig(directory, invalid_netplay, &error))
      return 13;
@@ -3947,6 +4530,55 @@ index 6bb9e0e..dc0041f 100644
    if (!moderngekko::frontend::GenerateControllerConfig(
            directory, netplay_config.controllers, &error))
      return 3;
+diff --git a/tests/hd_texture_pack_test.cpp b/tests/hd_texture_pack_test.cpp
+new file mode 100644
+index 0000000..0afe6f2
+--- /dev/null
++++ b/tests/hd_texture_pack_test.cpp
+@@ -0,0 +1,43 @@
++#include "moderngekko/hd_texture_pack.hpp"
++
++#include <chrono>
++#include <filesystem>
++#include <string>
++
++int main(int argc, char** argv)
++{
++  namespace fs = std::filesystem;
++  const fs::path directory =
++      fs::temp_directory_path() /
++      ("moderngekko-hd-pack-" +
++       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
++  fs::create_directories(directory / "ResourcePacks");
++
++  if (argc == 1)
++  {
++    const auto status = moderngekko::GetCommunityHdTexturePackStatus(directory);
++    fs::remove_all(directory);
++    return status.available || status.installed ? 1 : 0;
++  }
++
++  fs::copy_file(argv[1], directory / "ResourcePacks" / "Pokemon Colosseum HD Pack.zip");
++  auto status = moderngekko::GetCommunityHdTexturePackStatus(directory);
++  if (!status.available || status.installed || status.texture_count != 7045)
++    return 2;
++
++  std::string error;
++  if (!moderngekko::SetCommunityHdTexturePackEnabled(directory, true, &error))
++    return 3;
++  status = moderngekko::GetCommunityHdTexturePackStatus(directory);
++  if (!status.installed || !fs::is_directory(directory / "Load" / "Textures" / "GC6"))
++    return 4;
++
++  if (!moderngekko::SetCommunityHdTexturePackEnabled(directory, false, &error))
++    return 5;
++  status = moderngekko::GetCommunityHdTexturePackStatus(directory);
++  if (status.installed || fs::exists(directory / "Load" / "Textures" / "GC6"))
++    return 6;
++
++  fs::remove_all(directory);
++  return 0;
++}
 diff --git a/tests/launcher_savestates_test.cpp b/tests/launcher_savestates_test.cpp
 index ba67138..c97b31c 100644
 --- a/tests/launcher_savestates_test.cpp
@@ -4021,10 +4653,10 @@ index ba67138..c97b31c 100644
    fs::remove_all(root, ec);
 diff --git a/tools/automation_protocol.cpp b/tools/automation_protocol.cpp
 new file mode 100644
-index 0000000..9614c2f
+index 0000000..1e3a1e4
 --- /dev/null
 +++ b/tools/automation_protocol.cpp
-@@ -0,0 +1,532 @@
+@@ -0,0 +1,539 @@
 +#include "automation_protocol.hpp"
 +
 +#include <algorithm>
@@ -4538,6 +5170,13 @@ index 0000000..9614c2f
 +  output << "navigation_mode=" << status.navigation_mode << '\n';
 +  output << "navigation_valid=" << (status.navigation_valid ? "1" : "0")
 +         << '\n';
++  output << "movie_active=" << (status.movie_active ? "1" : "0") << '\n';
++  output << "live_title_scene_active="
++         << (status.live_title_scene_active ? "1" : "0") << '\n';
++  output << "authored_menu_active="
++         << (status.authored_menu_active ? "1" : "0") << '\n';
++  output << "menu_edge_fill_active="
++         << (status.menu_edge_fill_active ? "1" : "0") << '\n';
 +  output << "navigation_room_id=" << status.navigation_room_id << '\n';
 +  output << "navigation_player_x=" << status.navigation_player_x << '\n';
 +  output << "navigation_player_z=" << status.navigation_player_z << '\n';
@@ -4559,10 +5198,10 @@ index 0000000..9614c2f
 +}  // namespace moderngekko::automation
 diff --git a/tools/automation_protocol.hpp b/tools/automation_protocol.hpp
 new file mode 100644
-index 0000000..65893fb
+index 0000000..5e372a6
 --- /dev/null
 +++ b/tools/automation_protocol.hpp
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,310 @@
 +#pragma once
 +
 +#include "InputCommon/ControllerInterface/Touch/InputOverrider.h"
@@ -4577,6 +5216,52 @@ index 0000000..65893fb
 +
 +namespace moderngekko::automation
 +{
++constexpr int ResolveColosseumAuthoredCanvasSideWidth(int width, int height)
++{
++  if (width <= 0 || height <= 0)
++    return 0;
++
++  // Round height * 4/3 to the nearest whole presentation pixel. Naming uses
++  // the full authored 640x480 canvas; the narrower 602x480 PDA content width
++  // must not be reused here because it overpaints the model at both edges.
++  const int authored_width = (height * 4 + 1) / 3;
++  return width > authored_width ? (width - authored_width) / 2 : 0;
++}
++
++constexpr int ResolveColosseumNamingBackdropSideWidth(int width, int height)
++{
++  if (width <= 0 || height <= 0)
++    return 0;
++
++  // Naming UI is centered into the 602-pixel VI safe aperture so its outer
++  // frames remain visible. Extend the generated background through the same
++  // inset; all foreground geometry is deliberately inside this boundary.
++  constexpr int naming_content_width = 602;
++  constexpr int naming_content_height = 480;
++  const int content_width =
++      (height * naming_content_width + naming_content_height / 2) /
++      naming_content_height;
++  return width > content_width ? (width - content_width) / 2 : 0;
++}
++
++constexpr bool IsColosseumNamingBackdropLightBand(int output_y, int output_height)
++{
++  if (output_y < 0 || output_y >= output_height || output_height <= 0)
++    return false;
++
++  constexpr int authored_height = 480;
++  constexpr int band_height = 4;
++  constexpr int bottom_section_start = 367;
++  const int authored_y = static_cast<int>(
++      static_cast<std::int64_t>(output_y) * authored_height / output_height);
++
++  // The bottom background quad begins one source row before the uninterrupted
++  // stripe sequence would change. Mirror that authored seam so the generated
++  // ultrawide margins remain phase-aligned all the way to the bottom edge.
++  const int phased_y = authored_y >= bottom_section_start ? authored_y + 1 : authored_y;
++  return ((phased_y / band_height) & 1) != 0;
++}
++
 +constexpr bool IsColosseumFieldMenuMessage(std::uint32_t message_id)
 +{
 +  return message_id >= 0x013a && message_id <= 0x013d;
@@ -4608,6 +5293,62 @@ index 0000000..65893fb
 +  return message_id == 0x0069u || message_id == 0x2efdu;
 +}
 +
++constexpr bool IsColosseumCharacterNamingState(std::uint32_t message_id,
++                                                bool menu_active)
++{
++  // 0x0069 is reused by the title screen's "start a new Story?" prompt,
++  // where the menu-active byte is clear. The character-name confirmation
++  // raises that byte, while 0x2efd uniquely identifies name selection.
++  return message_id == 0x2efdu || (message_id == 0x0069u && menu_active);
++}
++
++constexpr bool IsColosseumBattleNowMenu(std::uint32_t message_id)
++{
++  // The standalone Battle Now flow never raises the field-menu flag or
++  // populates the field actor table. Its stable UI message identifies the
++  // fully authored canvas, including the difficulty popup.
++  return message_id == 0x3d6cu;
++}
++
++constexpr bool IsColosseumBattleGameplayMessage(std::uint32_t message_id)
++{
++  // Battle Now keeps the generic menu flag raised throughout combat, so that
++  // flag cannot distinguish the authored setup canvas from the live arena.
++  // 0x00cf starts the trainer introduction, 0x00d0 covers targeting/attack,
++  // 0x00e7 is move selection, and 0x013e is the battle command menu. Recognize
++  // each as an entry point so savestates can resume directly into any phase.
++  return message_id == 0x00cfu || message_id == 0x00d0u ||
++         message_id == 0x00e7u || message_id == 0x013eu;
++}
++
++constexpr bool ResolveColosseumBattleGameplaySession(
++    bool session_active, bool battle_now_menu_active, bool battle_gameplay_message,
++    bool navigation_valid, bool character_naming_active, bool movie_active)
++{
++  // Battle UI message ids change during move selection, targeting, and attack
++  // animation. Once combat is identified, retain Hor+ until a stable scene
++  // boundary proves that the standalone battle has ended.
++  if (battle_now_menu_active || navigation_valid || character_naming_active || movie_active)
++    return false;
++  return session_active || battle_gameplay_message;
++}
++
++enum class ColosseumAuthoredBackdrop : std::uint8_t
++{
++  None,
++  Naming,
++};
++
++constexpr ColosseumAuthoredBackdrop ResolveColosseumAuthoredBackdrop(
++    bool widescreen_enabled, bool movie_active, bool character_naming_active)
++{
++  if (!widescreen_enabled || movie_active)
++    return ColosseumAuthoredBackdrop::None;
++  if (character_naming_active)
++    return ColosseumAuthoredBackdrop::Naming;
++  return ColosseumAuthoredBackdrop::None;
++}
++
 +constexpr int ResolveColosseumNavigationOverlayMode(int configured_mode,
 +                                                     bool minimap_enabled)
 +{
@@ -4626,21 +5367,43 @@ index 0000000..65893fb
 +
 +constexpr bool ShouldUseColosseumAuthoredMenuPresentation(bool complete_menu_active,
 +                                                           bool navigation_valid,
-+                                                           bool character_naming_active)
++                                                           bool character_naming_active,
++                                                           bool gameplay_started = false,
++                                                           bool battle_now_active = false,
++                                                           bool battle_gameplay_active = false)
 +{
 +  // Field submenus and the pre-field character naming scene are authored as
 +  // complete 4:3 canvases. Applying the Hor+ projection multiplier to the
 +  // naming model makes it unnaturally thin, so preserve that canvas even
 +  // before the field actor table exists.
-+  return (!navigation_valid && character_naming_active) ||
-+         (complete_menu_active && navigation_valid);
++  // The field actor table is absent on Battle Now/Colosseum submenu canvases and
++  // immediately after loading a savestate. Once gameplay has started, a complete
++  // menu bit is sufficient evidence that the frame is an authored 4:3 canvas.
++  return !battle_gameplay_active &&
++         (battle_now_active || (!navigation_valid && character_naming_active) ||
++          (complete_menu_active && (navigation_valid || gameplay_started)));
 +}
 +
 +constexpr bool ShouldUseColosseumUltrawideProjection(bool widescreen_enabled,
-+                                                      bool gameplay_started,
-+                                                      bool complete_menu_active)
++                                                       bool gameplay_started,
++                                                       bool complete_menu_active,
++                                                       bool live_title_scene_active = false,
++                                                       bool movie_active = false)
 +{
-+  return widescreen_enabled && gameplay_started && !complete_menu_active;
++  return widescreen_enabled && !complete_menu_active && !movie_active &&
++         (gameplay_started || live_title_scene_active);
++}
++
++constexpr bool ShouldApplyColosseumProjectionPresentation(bool widescreen_enabled,
++                                                            bool gameplay_started,
++                                                            bool authored_menu_active,
++                                                            bool live_title_scene_active = false,
++                                                            bool movie_active = false)
++{
++  // Character naming is an authored 4:3 scene before field gameplay starts.
++  // Its embedded model still needs the authored-menu projection correction.
++  return widescreen_enabled &&
++         (gameplay_started || authored_menu_active || live_title_scene_active || movie_active);
 +}
 +
 +constexpr bool ShouldOffsetColosseumPyriteSky(bool widescreen_enabled,
@@ -4705,6 +5468,10 @@ index 0000000..65893fb
 +  std::uint64_t text_upscale_count = 0;
 +  int navigation_mode = 0;
 +  bool navigation_valid = false;
++  bool movie_active = false;
++  bool live_title_scene_active = false;
++  bool authored_menu_active = false;
++  bool menu_edge_fill_active = false;
 +  unsigned int navigation_room_id = 0;
 +  float navigation_player_x = 0.0f;
 +  float navigation_player_z = 0.0f;
@@ -4720,6 +5487,24 @@ index 0000000..65893fb
 +  std::string last_error;
 +};
 +
++inline constexpr bool IsColosseumMoviePlaybackActive(std::uint8_t player_ready,
++                                                      std::uint8_t movie_open)
++{
++  // This is the exact predicate used by THPPlayerGetState (fn_801E1874).
++  return player_ready != 0 && movie_open != 0;
++}
++
++inline constexpr bool IsColosseumLiveTitleSceneActive(bool movie_active,
++                                                       bool navigation_valid,
++                                                       bool authored_scene_active)
++{
++  // Before the field actor table exists, every non-movie, non-authored frame
++  // is part of the live title fly-through. The New Game confirmation is an
++  // overlay on that live scene and must keep the animated background active.
++  // Logos and the opening cinematic use THP; name entry has its own gate.
++  return !movie_active && !navigation_valid && !authored_scene_active;
++}
++
 +std::filesystem::path ResolveControlPath(const std::filesystem::path& automation_directory,
 +                                         const std::filesystem::path& value);
 +std::vector<std::filesystem::path>
@@ -4728,7 +5513,7 @@ index 0000000..65893fb
 +std::string FormatStatus(const Status& status);
 +}  // namespace moderngekko::automation
 diff --git a/tools/frontend_config.cpp b/tools/frontend_config.cpp
-index 03740d4..b316cff 100644
+index 03740d4..88b857b 100644
 --- a/tools/frontend_config.cpp
 +++ b/tools/frontend_config.cpp
 @@ -55,6 +55,23 @@ bool ParseBoolean(const std::string &value, bool *result) {
@@ -4755,7 +5540,7 @@ index 03740d4..b316cff 100644
  fs::path ControllerConfigPath(const fs::path &user_directory) {
  #ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
    return user_directory / "Config" / "GCPadNew.ini";
-@@ -137,6 +154,78 @@ ConfigResult LoadConfig(const fs::path &user_directory,
+@@ -137,6 +154,81 @@ ConfigResult LoadConfig(const fs::path &user_directory,
      } else if (key == "show_fps_in_title") {
        if (!ParseBoolean(value, &config.show_fps_in_title))
          return {.error = "show_fps_in_title must be true or false"};
@@ -4783,6 +5568,9 @@ index 03740d4..b316cff 100644
 +    } else if (key == "hires_textures") {
 +      if (!ParseBoolean(value, &config.hires_textures))
 +        return {.error = "hires_textures must be true or false"};
++    } else if (key == "community_hd_texture_pack") {
++      if (!ParseBoolean(value, &config.community_hd_texture_pack))
++        return {.error = "community_hd_texture_pack must be true or false"};
 +    } else if (key == "cache_hires_textures") {
 +      if (!ParseBoolean(value, &config.cache_hires_textures))
 +        return {.error = "cache_hires_textures must be true or false"};
@@ -4834,7 +5622,7 @@ index 03740d4..b316cff 100644
      } else if (key == "fullscreen") {
        if (!ParseBoolean(value, &config.fullscreen))
          return {.error = "fullscreen must be true or false"};
-@@ -211,6 +300,19 @@ bool SaveConfig(const fs::path &user_directory, const ConfigResult &config,
+@@ -211,6 +303,19 @@ bool SaveConfig(const fs::path &user_directory, const ConfigResult &config,
    const std::string graphics_backend =
        NormalizeGraphicsBackend(config.graphics_backend);
    if (config.resolution.empty() || graphics_backend.empty() ||
@@ -4854,7 +5642,7 @@ index 03740d4..b316cff 100644
        config.netplay_nickname.empty() ||
        config.netplay_nickname.size() > 30 ||
        config.netplay_nickname.find_first_of("\r\n") != std::string::npos ||
-@@ -253,10 +355,35 @@ bool SaveConfig(const fs::path &user_directory, const ConfigResult &config,
+@@ -253,10 +358,37 @@ bool SaveConfig(const fs::path &user_directory, const ConfigResult &config,
            "[Video]\n"
            "resolution="
         << config.resolution << '\n'
@@ -4868,6 +5656,8 @@ index 03740d4..b316cff 100644
 +        << "osd_font_size=" << config.osd_font_size << '\n'
 +        << "navigation_overlay=" << config.navigation_overlay << '\n'
 +        << "hires_textures=" << (config.hires_textures ? "true" : "false") << '\n'
++        << "community_hd_texture_pack="
++        << (config.community_hd_texture_pack ? "true" : "false") << '\n'
 +        << "cache_hires_textures="
 +        << (config.cache_hires_textures ? "true" : "false") << '\n'
 +        << "dump_textures=" << (config.dump_textures ? "true" : "false") << '\n'
@@ -4892,10 +5682,10 @@ index 03740d4..b316cff 100644
    for (std::size_t i = 0; i < config.controllers.size() && i < 4; ++i) {
      if (config.controllers[i].find_first_of("\r\n") != std::string::npos) {
 diff --git a/tools/frontend_config.hpp b/tools/frontend_config.hpp
-index 3b18d05..e604e96 100644
+index 3b18d05..03f7025 100644
 --- a/tools/frontend_config.hpp
 +++ b/tools/frontend_config.hpp
-@@ -20,6 +20,28 @@ struct GraphicsBackendOption {
+@@ -20,6 +20,29 @@ struct GraphicsBackendOption {
  
  struct ConfigResult {
    int dolphin_scale = 0;
@@ -4907,6 +5697,7 @@ index 3b18d05..e604e96 100644
 +  int osd_font_size = 13;
 +  int navigation_overlay = 0;
 +  bool hires_textures = false;
++  bool community_hd_texture_pack = false;
 +  bool cache_hires_textures = false;
 +  bool dump_textures = false;
 +  bool text_upscale = false;
@@ -4949,16 +5740,20 @@ index 51fc990..e7b86b4 100644
  }
  }  // namespace moderngekko::frontend
 diff --git a/tools/moderngekko_launcher.cpp b/tools/moderngekko_launcher.cpp
-index 7699c3d..3f3defa 100644
+index 7699c3d..7e31c94 100644
 --- a/tools/moderngekko_launcher.cpp
 +++ b/tools/moderngekko_launcher.cpp
-@@ -1,4 +1,6 @@
+@@ -1,7 +1,9 @@
 +#include "automation_protocol.hpp"
  #include "frontend_config.hpp"
-+#include "launcher_savestates.hpp"
- #include "dol_patch.hpp"
+-#include "dol_patch.hpp"
  #include "launcher_savestates.hpp"
++#include "dol_patch.hpp"
  #include "moderngekko/game.hpp"
++#include "moderngekko/hd_texture_pack.hpp"
+ #include "netplay_session.hpp"
+ 
+ #include "DiscIO/DiscExtractor.h"
 @@ -132,8 +134,11 @@ int FindController(const std::vector<ControllerOption>& controllers, std::string
    return found == controllers.end() ? -1 : static_cast<int>(found - controllers.begin());
  }
@@ -4990,7 +5785,18 @@ index 7699c3d..3f3defa 100644
    if (extract_only)
    {
      ExtractionState extraction;
-@@ -547,8 +553,8 @@ int main(int argc, char** argv)
+@@ -538,6 +544,10 @@ int main(int argc, char** argv)
+                              config.error.c_str(), nullptr);
+     return 2;
+   }
++  moderngekko::CommunityHdTexturePackStatus community_pack_status =
++      moderngekko::GetCommunityHdTexturePackStatus(user_directory);
++  config.community_hd_texture_pack = community_pack_status.installed;
++  std::string community_pack_message;
+ 
+ #if defined(__linux__)
+   SDL_SetHint(SDL_HINT_VIDEO_DRIVER, use_wayland ? "wayland" : "x11");
+@@ -547,8 +557,8 @@ int main(int argc, char** argv)
      return 1;
  
    const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
@@ -5001,7 +5807,7 @@ index 7699c3d..3f3defa 100644
                                          SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
    if (!window)
    {
-@@ -617,7 +623,40 @@ int main(int argc, char** argv)
+@@ -617,7 +627,40 @@ int main(int argc, char** argv)
      if (config.graphics_backend == graphics_backends[i].value)
        graphics_backend_index = static_cast<int>(i);
    }
@@ -5043,7 +5849,7 @@ index 7699c3d..3f3defa 100644
    // StateSaves is Dolphin's own state directory, so states written in-game land
    // here without any extra configuration and show up on the next launch.
    //
-@@ -627,8 +666,8 @@ int main(int argc, char** argv)
+@@ -627,8 +670,8 @@ int main(int argc, char** argv)
    // states are written by the running game, not by the launcher.
    const std::vector<fs::path> launcher_savestates =
        moderngekko::frontend::ListLauncherSavestates(user_directory / "StateSaves");
@@ -5054,7 +5860,7 @@ index 7699c3d..3f3defa 100644
    int selected_savestate = -1;
  
    DialogState dialog;
-@@ -794,11 +833,11 @@ int main(int argc, char** argv)
+@@ -794,11 +837,11 @@ int main(int argc, char** argv)
                  moderngekko::frontend::LauncherSavestateLabel(
                      launcher_savestates[static_cast<std::size_t>(selected_savestate)],
                      selected_savestate == 0) :
@@ -5068,7 +5874,7 @@ index 7699c3d..3f3defa 100644
              selected_savestate = -1;
            if (normal_boot_selected)
              ImGui::SetItemDefaultFocus();
-@@ -964,6 +1003,323 @@ int main(int argc, char** argv)
+@@ -964,6 +1007,361 @@ int main(int argc, char** argv)
        }
        ImGui::EndCombo();
      }
@@ -5101,19 +5907,6 @@ index 7699c3d..3f3defa 100644
 +            ImGui::SetItemDefaultFocus();
 +        }
 +        ImGui::EndCombo();
-+      }
-+
-+      const bool previous_widescreen_hack = config.widescreen_hack;
-+      if (ImGui::Checkbox("Expand 3D camera (widescreen hack)",
-+                          &config.widescreen_hack))
-+      {
-+        std::string error;
-+        if (!moderngekko::frontend::SaveConfig(user_directory, config, &error))
-+        {
-+          config.widescreen_hack = previous_widescreen_hack;
-+          std::lock_guard lock(dialog.mutex);
-+          dialog.error = std::move(error);
-+        }
 +      }
 +
 +      const bool previous_native_ultrawide = config.native_ultrawide;
@@ -5221,6 +6014,57 @@ index 7699c3d..3f3defa 100644
 +        }
 +        ImGui::EndCombo();
 +      }
++
++      ImGui::Spacing();
++      ImGui::BeginDisabled(!community_pack_status.available);
++      if (ImGui::Checkbox("Community HD texture pack (Sephie)",
++                          &config.community_hd_texture_pack))
++      {
++        const bool enabled = config.community_hd_texture_pack;
++        std::string error;
++        if (moderngekko::SetCommunityHdTexturePackEnabled(
++                user_directory, enabled, &error))
++        {
++          if (enabled)
++            config.hires_textures = true;
++          if (moderngekko::frontend::SaveConfig(user_directory, config, &error))
++          {
++            community_pack_status =
++                moderngekko::GetCommunityHdTexturePackStatus(user_directory);
++            community_pack_message = enabled ?
++                                         "Installed and enabled. ModernGekko's cleaner UI overrides take priority." :
++                                         "Disabled and removed from the active texture directory.";
++          }
++          else
++          {
++            std::string rollback_error;
++            moderngekko::SetCommunityHdTexturePackEnabled(
++                user_directory, !enabled, &rollback_error);
++            config.community_hd_texture_pack = !enabled;
++            std::lock_guard lock(dialog.mutex);
++            dialog.error = std::move(error);
++          }
++        }
++        else
++        {
++          config.community_hd_texture_pack = !enabled;
++          std::lock_guard lock(dialog.mutex);
++          dialog.error = std::move(error);
++        }
++      }
++      ImGui::EndDisabled();
++      if (community_pack_status.available)
++      {
++        ImGui::TextDisabled("%zu community textures; 9 curated ModernGekko UI/title overrides.",
++                            community_pack_status.texture_count);
++      }
++      else
++      {
++        ImGui::TextDisabled(
++            "Not installed: add Pokemon Colosseum HD Pack.zip to User/ResourcePacks.");
++      }
++      if (!community_pack_message.empty())
++        ImGui::TextWrapped("%s", community_pack_message.c_str());
 +
 +      if (ImGui::Checkbox("Upscale dynamic game text (4x)",
 +                          &config.text_upscale))
@@ -5392,7 +6236,7 @@ index 7699c3d..3f3defa 100644
      const bool previous_show_fps_in_title = show_fps_in_title;
      if (ImGui::Checkbox("Show FPS in window title", &show_fps_in_title))
      {
-@@ -1117,15 +1473,15 @@ int main(int argc, char** argv)
+@@ -1117,15 +1515,15 @@ int main(int argc, char** argv)
      {
        std::vector<std::string> argument_storage = {SiblingRunner(argv[0]).string(), "--game",
                                                     current_game.string(), "--user-dir",
@@ -5812,7 +6656,7 @@ index 10ea4a6..3b1929e 100644
        options.runner_arguments.push_back(arg);
      else
 diff --git a/tools/moderngekko_run.cpp b/tools/moderngekko_run.cpp
-index 476c77f..7b6780e 100644
+index 476c77f..ceae6c8 100644
 --- a/tools/moderngekko_run.cpp
 +++ b/tools/moderngekko_run.cpp
 @@ -1,12 +1,11 @@
@@ -5940,7 +6784,7 @@ index 476c77f..7b6780e 100644
      else if (arg == "--mods")
        config.mod_directories.emplace_back(value("--mods"));
      else if (arg == "--no-mods")
-@@ -242,6 +275,44 @@ int RunMain(int argc, char **argv) {
+@@ -242,6 +275,46 @@ int RunMain(int argc, char **argv) {
      return 2;
    }
    config.graphics.internal_resolution_scale = frontend_config.dolphin_scale;
@@ -5956,6 +6800,8 @@ index 476c77f..7b6780e 100644
 +          frontend_config.navigation_overlay,
 +          frontend_config.minimap_high_contrast);
 +  config.graphics.hires_textures = frontend_config.hires_textures;
++  config.graphics.community_hd_texture_pack =
++      frontend_config.community_hd_texture_pack;
 +  config.graphics.cache_hires_textures =
 +      frontend_config.cache_hires_textures;
 +  config.graphics.dump_textures = frontend_config.dump_textures;
@@ -5985,7 +6831,7 @@ index 476c77f..7b6780e 100644
    if (config.graphics.backend.empty())
      config.graphics.backend = frontend_config.graphics_backend;
    config.fullscreen = frontend_config.fullscreen;
-@@ -249,6 +320,21 @@ int RunMain(int argc, char **argv) {
+@@ -249,6 +322,21 @@ int RunMain(int argc, char **argv) {
    if (use_default_mods) {
      config.mod_directories.push_back(executable_directory / "Mods");
      config.mod_directories.push_back(config.user_directory / "Mods");
@@ -6007,7 +6853,7 @@ index 476c77f..7b6780e 100644
    }
  
    if (!netplay_role && !frontend_config.controller.empty()) {
-@@ -314,8 +400,15 @@ int RunMain(int argc, char **argv) {
+@@ -314,8 +402,15 @@ int RunMain(int argc, char **argv) {
      if (const char *env = std::getenv("STATICRECOMP_MODULE"))
        module_path = env;
      else {
@@ -6025,7 +6871,7 @@ index 476c77f..7b6780e 100644
        const auto bundled = executable_directory / module_name;
        const auto user_module =
            config.user_directory / "StaticRecompModules" / module_name;
-@@ -323,6 +416,12 @@ int RunMain(int argc, char **argv) {
+@@ -323,6 +418,12 @@ int RunMain(int argc, char **argv) {
          module_path = bundled;
        else if (std::filesystem::is_regular_file(user_module))
          module_path = user_module;
@@ -6038,3 +6884,10 @@ index 476c77f..7b6780e 100644
      }
    }
    if (!module_path.empty())
+diff --git a/vendor/dolphin b/vendor/dolphin
+index 13e4920..5142345 160000
+--- a/vendor/dolphin
++++ b/vendor/dolphin
+@@ -1 +1 @@
+-Subproject commit 13e492094902644b0d113c586300d358640f9e19
++Subproject commit 5142345ce9b1dd180ef7df21f4596842c51755ec-dirty

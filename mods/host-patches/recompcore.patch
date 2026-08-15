@@ -153,10 +153,10 @@ index a81707358e..ab292e1017 100644
          mem_write8(cpu, guest_addr + k, b);
      }
 diff --git a/Source/Core/Core/Config/GraphicsSettings.cpp b/Source/Core/Core/Config/GraphicsSettings.cpp
-index fb7f6a872b..0067d2f953 100644
+index fb7f6a872b..a512a7af7d 100644
 --- a/Source/Core/Core/Config/GraphicsSettings.cpp
 +++ b/Source/Core/Core/Config/GraphicsSettings.cpp
-@@ -19,6 +19,10 @@ const Info<int> GFX_ADAPTER{{System::GFX, "Hardware", "Adapter"}, 0};
+@@ -19,6 +19,14 @@ const Info<int> GFX_ADAPTER{{System::GFX, "Hardware", "Adapter"}, 0};
  // Graphics.Settings
  
  const Info<bool> GFX_WIDESCREEN_HACK{{System::GFX, "Settings", "wideScreenHack"}, false};
@@ -164,19 +164,25 @@ index fb7f6a872b..0067d2f953 100644
 +    {System::GFX, "Settings", "WidescreenHudSafeArea"}, false};
 +const Info<float> GFX_WIDESCREEN_HUD_SAFE_AREA_SCALE{
 +    {System::GFX, "Settings", "WidescreenHudSafeAreaScale"}, 1.0f};
++const Info<bool> GFX_WIDESCREEN_AUTHORED_MENU{
++    {System::GFX, "Settings", "WidescreenAuthoredMenu"}, false};
++const Info<bool> GFX_COLOSSEUM_NAMING_PRESENTATION{
++    {System::GFX, "Settings", "ColosseumNamingPresentation"}, false};
  const Info<AspectMode> GFX_ASPECT_RATIO{{System::GFX, "Settings", "AspectRatio"}, AspectMode::Auto};
  const Info<int> GFX_CUSTOM_ASPECT_RATIO_WIDTH{{System::GFX, "Settings", "CustomAspectRatioWidth"},
                                                1};
 diff --git a/Source/Core/Core/Config/GraphicsSettings.h b/Source/Core/Core/Config/GraphicsSettings.h
-index 831e04422b..72c134b631 100644
+index 831e04422b..d06f59bc1e 100644
 --- a/Source/Core/Core/Config/GraphicsSettings.h
 +++ b/Source/Core/Core/Config/GraphicsSettings.h
-@@ -31,6 +31,8 @@ extern const Info<int> GFX_ADAPTER;
+@@ -31,6 +31,10 @@ extern const Info<int> GFX_ADAPTER;
  // Graphics.Settings
  
  extern const Info<bool> GFX_WIDESCREEN_HACK;
 +extern const Info<bool> GFX_WIDESCREEN_HUD_SAFE_AREA;
 +extern const Info<float> GFX_WIDESCREEN_HUD_SAFE_AREA_SCALE;
++extern const Info<bool> GFX_WIDESCREEN_AUTHORED_MENU;
++extern const Info<bool> GFX_COLOSSEUM_NAMING_PRESENTATION;
  extern const Info<AspectMode> GFX_ASPECT_RATIO;
  extern const Info<int> GFX_CUSTOM_ASPECT_RATIO_WIDTH;
  extern const Info<int> GFX_CUSTOM_ASPECT_RATIO_HEIGHT;
@@ -437,10 +443,10 @@ index e8d0287008..aa9387dedb 100644
  {
    std::memcpy(ppc.gpr, s.gpr, sizeof(ppc.gpr));
 diff --git a/Source/Core/DolphinNoGUI/PlatformWin32.cpp b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
-index 3402fdae95..2bd815f2dd 100644
+index 3402fdae95..9341767a12 100644
 --- a/Source/Core/DolphinNoGUI/PlatformWin32.cpp
 +++ b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
-@@ -28,6 +28,32 @@
+@@ -28,6 +28,34 @@
  #include "VideoCommon/Present.h"
  #include "resource.h"
  
@@ -456,6 +462,8 @@ index 3402fdae95..2bd815f2dd 100644
 +void Host_ToggleTextUpscale();
 +bool Host_IsHighResolutionTexturesEnabled();
 +void Host_ToggleHighResolutionTextures();
++bool Host_IsCommunityHdTexturePackEnabled();
++void Host_ToggleCommunityHdTexturePack();
 +bool Host_IsTextureDumpingEnabled();
 +void Host_ToggleTextureDumping();
 +bool Host_IsInputOverlayEnabled();
@@ -473,7 +481,7 @@ index 3402fdae95..2bd815f2dd 100644
  namespace
  {
  // Menu command ids. Load State entries are allocated a contiguous range,
-@@ -36,12 +62,23 @@ constexpr UINT ID_SAVE_STATE = 41001;
+@@ -36,12 +64,24 @@ constexpr UINT ID_SAVE_STATE = 41001;
  constexpr UINT ID_PAUSE = 41002;
  constexpr UINT ID_MUTE = 41003;
  constexpr UINT ID_FULLSCREEN = 41004;
@@ -491,6 +499,7 @@ index 3402fdae95..2bd815f2dd 100644
 +constexpr UINT ID_NAV_FAST_FORWARD = 41022;
 +constexpr UINT ID_NAV_AUTOSAVE = 41023;
 +constexpr UINT ID_NAV_SIXTY_FPS = 41024;
++constexpr UINT ID_NAV_COMMUNITY_HD_TEXTURE_PACK = 41025;
  constexpr UINT ID_LOAD_STATE_FIRST = 41100;
  constexpr UINT ID_LOAD_STATE_LAST = 41199;
  
@@ -500,7 +509,7 @@ index 3402fdae95..2bd815f2dd 100644
  
  class PlatformWin32 final : public Platform
  {
-@@ -65,6 +102,7 @@ private:
+@@ -65,6 +105,7 @@ private:
    void RefreshMenu(HMENU menu);
    void SaveStateToStatesDirectory();
    void ToggleFullscreen();
@@ -508,7 +517,7 @@ index 3402fdae95..2bd815f2dd 100644
    void UpdateWindowPosition();
    void ProcessEvents();
  
-@@ -73,13 +111,14 @@ private:
+@@ -73,13 +114,14 @@ private:
    HMENU m_file_menu{};
    HMENU m_load_menu{};
    HMENU m_view_menu{};
@@ -526,7 +535,7 @@ index 3402fdae95..2bd815f2dd 100644
  
    int m_window_x = Config::Get(Config::MAIN_RENDER_WINDOW_XPOS);
    int m_window_y = Config::Get(Config::MAIN_RENDER_WINDOW_YPOS);
-@@ -141,19 +180,51 @@ bool PlatformWin32::CreateMenus()
+@@ -141,19 +183,53 @@ bool PlatformWin32::CreateMenus()
    m_file_menu = CreatePopupMenu();
    m_load_menu = CreatePopupMenu();
    m_view_menu = CreatePopupMenu();
@@ -568,6 +577,8 @@ index 3402fdae95..2bd815f2dd 100644
 +  AppendMenuW(m_view_menu, MF_SEPARATOR, 0, nullptr);
 +  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_TEXT_UPSCALE,
 +              L"High-Resolution &Text");
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_COMMUNITY_HD_TEXTURE_PACK,
++              L"Community HD Texture &Pack");
 +  AppendMenuW(m_view_menu, MF_SEPARATOR, 0, nullptr);
 +  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_INPUT_OVERLAY,
 +              L"Controller &Input Overlay");
@@ -580,7 +591,7 @@ index 3402fdae95..2bd815f2dd 100644
    AppendMenuW(m_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(m_file_menu), L"&File");
    AppendMenuW(m_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(m_view_menu), L"&View");
    return SetMenu(m_hwnd, m_menu) != FALSE;
-@@ -168,6 +239,9 @@ void PlatformWin32::RefreshMenu(const HMENU menu)
+@@ -168,6 +244,9 @@ void PlatformWin32::RefreshMenu(const HMENU menu)
      auto& system = Core::System::GetInstance();
      const bool paused = Core::GetState(system) == Core::State::Paused;
      CheckMenuItem(m_file_menu, ID_PAUSE, MF_BYCOMMAND | (paused ? MF_CHECKED : MF_UNCHECKED));
@@ -590,7 +601,7 @@ index 3402fdae95..2bd815f2dd 100644
      return;
    }
  
-@@ -176,8 +250,55 @@ void PlatformWin32::RefreshMenu(const HMENU menu)
+@@ -176,8 +255,58 @@ void PlatformWin32::RefreshMenu(const HMENU menu)
      CheckMenuItem(m_view_menu, ID_MUTE,
                    MF_BYCOMMAND |
                        (Config::Get(Config::MAIN_AUDIO_MUTED) ? MF_CHECKED : MF_UNCHECKED));
@@ -607,6 +618,9 @@ index 3402fdae95..2bd815f2dd 100644
 +    CheckMenuItem(m_view_menu, ID_NAV_TEXT_UPSCALE,
 +                  MF_BYCOMMAND |
 +                      (Host_IsTextUpscaleEnabled() ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_COMMUNITY_HD_TEXTURE_PACK,
++                  MF_BYCOMMAND |
++                      (Host_IsCommunityHdTexturePackEnabled() ? MF_CHECKED : MF_UNCHECKED));
 +    CheckMenuItem(m_view_menu, ID_NAV_INPUT_OVERLAY,
 +                  MF_BYCOMMAND |
 +                      (Host_IsInputOverlayEnabled() ? MF_CHECKED : MF_UNCHECKED));
@@ -647,7 +661,7 @@ index 3402fdae95..2bd815f2dd 100644
      return;
    }
  
-@@ -231,45 +352,67 @@ void PlatformWin32::SaveStateToStatesDirectory()
+@@ -231,45 +360,67 @@ void PlatformWin32::SaveStateToStatesDirectory()
  
  void PlatformWin32::ToggleFullscreen()
  {
@@ -740,7 +754,7 @@ index 3402fdae95..2bd815f2dd 100644
  
    if (Config::Get(Config::MAIN_DISABLE_SCREENSAVER))
      SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
-@@ -364,16 +507,16 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
+@@ -364,16 +515,16 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
    break;
  
    case WM_KEYDOWN:
@@ -761,7 +775,7 @@ index 3402fdae95..2bd815f2dd 100644
        return 0;
      }
      else if (wParam == VK_F11)
-@@ -381,9 +524,9 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
+@@ -381,9 +532,9 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
        platform->ToggleFullscreen();
        return 0;
      }
@@ -773,7 +787,7 @@ index 3402fdae95..2bd815f2dd 100644
        return 0;
      }
      else if (wParam == VK_ESCAPE)
-@@ -395,15 +538,14 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
+@@ -395,15 +546,14 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
    case WM_KEYUP:
      if (wParam == VK_SPACE)
      {
@@ -792,7 +806,7 @@ index 3402fdae95..2bd815f2dd 100644
      break;
  
    case WM_SYSKEYDOWN:
-@@ -442,6 +584,44 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
+@@ -442,6 +592,46 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
      {
        platform->ToggleFullscreen();
      }
@@ -822,6 +836,8 @@ index 3402fdae95..2bd815f2dd 100644
 +      Host_SetUltrawideEfbScale(6);
 +    else if (command == ID_NAV_TEXT_UPSCALE)
 +      Host_ToggleTextUpscale();
++    else if (command == ID_NAV_COMMUNITY_HD_TEXTURE_PACK)
++      Host_ToggleCommunityHdTexturePack();
 +    else if (command == ID_NAV_INPUT_OVERLAY)
 +      Host_ToggleInputOverlay();
 +    else if (command == ID_NAV_MINIMAP_HIGH_CONTRAST)
@@ -1087,12 +1103,67 @@ index e9a1d545c2..d258d13052 100644
          return false;
      }
      break;
+diff --git a/Source/Core/VideoCommon/ColosseumProjection.h b/Source/Core/VideoCommon/ColosseumProjection.h
+new file mode 100644
+index 0000000000..06f41580cc
+--- /dev/null
++++ b/Source/Core/VideoCommon/ColosseumProjection.h
+@@ -0,0 +1,49 @@
++// Copyright 2026 Dolphin Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <cmath>
++
++namespace VideoCommon
++{
++constexpr float COLOSSEUM_AUTHORED_ASPECT = 4.0f / 3.0f;
++constexpr float COLOSSEUM_WIDE_ASPECT = 16.0f / 9.0f;
++constexpr float COLOSSEUM_AUTHORED_MENU_MINIMUM_SCALE =
++    COLOSSEUM_WIDE_ASPECT / COLOSSEUM_AUTHORED_ASPECT;
++constexpr float COLOSSEUM_NAMING_HORIZONTAL_SCALE = 602.0f / 640.0f;
++
++inline float GetColosseumNamingHorizontalScale(bool naming_screen_active)
++{
++  return naming_screen_active ? COLOSSEUM_NAMING_HORIZONTAL_SCALE : 1.0f;
++}
++
++inline float GetColosseumPresentationAspect(float source_aspect,
++                                             bool authored_menu_active)
++{
++  return authored_menu_active ? COLOSSEUM_AUTHORED_ASPECT : source_aspect;
++}
++
++inline float GetColosseumAuthoredMenuHorizontalScale(float raw_aspect,
++                                                      bool authored_menu_active)
++{
++  if (!authored_menu_active || !std::isfinite(raw_aspect) || raw_aspect <= 0.0f)
++    return 1.0f;
++
++  // Colosseum's embedded Pokemon cameras cache the active field aspect when a
++  // PC, party, or summary screen opens. Those models are then drawn into a
++  // 4:3 viewport, so normalize only that menu-owned perspective projection.
++  return raw_aspect / COLOSSEUM_AUTHORED_ASPECT;
++}
++
++inline bool IsColosseumSquareOffscreenViewport(float viewport_half_width,
++                                                float viewport_half_height)
++{
++  if (!std::isfinite(viewport_half_width) || !std::isfinite(viewport_half_height))
++    return false;
++
++  const float width = std::abs(viewport_half_width);
++  const float height = std::abs(viewport_half_height);
++  return width >= 32.0f && std::abs(width - height) <= 0.5f;
++}
++}  // namespace VideoCommon
 diff --git a/Source/Core/VideoCommon/ColosseumTextUpscale.h b/Source/Core/VideoCommon/ColosseumTextUpscale.h
 new file mode 100644
-index 0000000000..41e779e627
+index 0000000000..969c088fd6
 --- /dev/null
 +++ b/Source/Core/VideoCommon/ColosseumTextUpscale.h
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,85 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +
 +#pragma once
@@ -1101,12 +1172,17 @@ index 0000000000..41e779e627
 +
 +namespace ColosseumTextUpscale
 +{
-+// A 0.30-wide transition is approximately one antialiased output pixel at 4x magnification.
-+// The previous 0.60-wide ramp left two to three soft pixels around every glyph contour.
-+constexpr float COVERAGE_LOW = 0.35f;
-+constexpr float COVERAGE_HIGH = 0.65f;
-+constexpr float COLOR_COVERAGE_LOW = 0.22f;
-+constexpr float COLOR_COVERAGE_HIGH = 0.78f;
++// Keep most of the source coverage at the center of each texel. The narrower reconstruction
++// radius rounds native pixel shoulders without spreading enough coverage to close the one-pixel
++// counters used by lowercase e and other small Colosseum glyphs.
++constexpr float COVERAGE_LOW = 0.40f;
++constexpr float COVERAGE_HIGH = 0.68f;
++constexpr float COLOR_COVERAGE_LOW = 0.10f;
++constexpr float COLOR_COVERAGE_HIGH = 0.90f;
++constexpr float RECONSTRUCTION_RADIUS = 0.55f;
++constexpr float CENTER_WEIGHT = 0.68f;
++constexpr float AXIAL_WEIGHT = 0.065f;
++constexpr float DIAGONAL_WEIGHT = 0.015f;
 +
 +// Battle status labels (Lv/HP/EXP) and their neighboring HUD sprites share this RGB5A3 atlas.
 +// Keying the color-preserving path by both dimensions and hash keeps the text option from
@@ -1120,7 +1196,7 @@ index 0000000000..41e779e627
 +  ColorCoverage,
 +};
 +
-+constexpr float SharpenCoverage(float coverage)
++constexpr float ReconstructCoverage(float coverage)
 +{
 +  if (coverage <= COVERAGE_LOW)
 +    return 0.0f;
@@ -1129,6 +1205,12 @@ index 0000000000..41e779e627
 +
 +  const float t = (coverage - COVERAGE_LOW) / (COVERAGE_HIGH - COVERAGE_LOW);
 +  return t * t * (3.0f - 2.0f * t);
++}
++
++constexpr float CombineCoverage(float center, float axial_sum, float diagonal_sum)
++{
++  return center * CENTER_WEIGHT + axial_sum * AXIAL_WEIGHT +
++         diagonal_sum * DIAGONAL_WEIGHT;
 +}
 +
 +struct Plan
@@ -1143,7 +1225,7 @@ index 0000000000..41e779e627
 +                       std::uint32_t height, std::uint32_t level_count,
 +                       std::uint64_t texture_hash)
 +{
-+  constexpr std::uint32_t scale = 4;
++  constexpr std::uint32_t scale = 6;
 +  if (!enabled || level_count != 1)
 +    return {};
 +
@@ -1168,7 +1250,7 @@ index 0000000000..41e779e627
 +}
 +}  // namespace ColosseumTextUpscale
 diff --git a/Source/Core/VideoCommon/FramebufferShaderGen.cpp b/Source/Core/VideoCommon/FramebufferShaderGen.cpp
-index 248146e2b6..9401a97225 100644
+index 248146e2b6..7e1a0662e4 100644
 --- a/Source/Core/VideoCommon/FramebufferShaderGen.cpp
 +++ b/Source/Core/VideoCommon/FramebufferShaderGen.cpp
 @@ -8,6 +8,7 @@
@@ -1179,7 +1261,7 @@ index 248146e2b6..9401a97225 100644
  #include "VideoCommon/ShaderGenCommon.h"
  #include "VideoCommon/TextureDecoder.h"
  #include "VideoCommon/VertexShaderGen.h"
-@@ -328,6 +329,48 @@ std::string GenerateTextureCopyPixelShader()
+@@ -328,6 +329,72 @@ std::string GenerateTextureCopyPixelShader()
    return code.GetBuffer();
  }
  
@@ -1189,16 +1271,41 @@ index 248146e2b6..9401a97225 100644
 +  EmitSamplerDeclarations(code, 0, 1, false);
 +  EmitPixelMainDeclaration(code, 1, 0);
 +  code.Write("{{\n"
-+             "  float4 source = ");
++             // Reconstruct a rounded silhouette from a compact, center-weighted footprint in
++             // native texel space. The small radius smooths curved shoulders while preserving
++             // the one-pixel counters in lowercase e and other narrow Colosseum glyphs.
++             "  float2 texel = float2(1.0f / 512.0f, 1.0f / 512.0f);\n"
++             "  float2 radius = texel * {:.3f}f;\n"
++             "  float center = ",
++             ColosseumTextUpscale::RECONSTRUCTION_RADIUS);
 +  EmitSampleTexture(code, 0, "v_tex0");
-+  code.Write(";\n"
-+             // Colosseum's I4 text surfaces store the same coverage in RGBA. Tightening that
-+             // coverage after bilinear enlargement sharpens both the outside edge and the
-+             // transparent counters inside glyphs without touching unrelated scene textures.
-+             "  float coverage = smoothstep({:.2f}f, {:.2f}f, source.a);\n"
++  code.Write(".a;\n"
++             "  float axial = ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy + float2(radius.x, 0.0f), v_tex0.z)");
++  code.Write(".a + ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy - float2(radius.x, 0.0f), v_tex0.z)");
++  code.Write(".a + ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy + float2(0.0f, radius.y), v_tex0.z)");
++  code.Write(".a + ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy - float2(0.0f, radius.y), v_tex0.z)");
++  code.Write(".a;\n"
++             "  float diagonal = ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy + radius, v_tex0.z)");
++  code.Write(".a + ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy - radius, v_tex0.z)");
++  code.Write(".a + ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy + float2(radius.x, -radius.y), v_tex0.z)");
++  code.Write(".a + ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy + float2(-radius.x, radius.y), v_tex0.z)");
++  code.Write(".a;\n"
++             "  float reconstructed = center * {:.3f}f + axial * {:.3f}f + "
++             "diagonal * {:.3f}f;\n"
++             "  float coverage = smoothstep({:.2f}f, {:.2f}f, reconstructed);\n"
 +             "  ocol0 = float4(coverage, coverage, coverage, coverage);\n"
 +             "}}\n",
-+             ColosseumTextUpscale::COVERAGE_LOW, ColosseumTextUpscale::COVERAGE_HIGH);
++             ColosseumTextUpscale::CENTER_WEIGHT, ColosseumTextUpscale::AXIAL_WEIGHT,
++             ColosseumTextUpscale::DIAGONAL_WEIGHT, ColosseumTextUpscale::COVERAGE_LOW,
++             ColosseumTextUpscale::COVERAGE_HIGH);
 +  return code.GetBuffer();
 +}
 +
@@ -1213,8 +1320,7 @@ index 248146e2b6..9401a97225 100644
 +  code.Write(";\n"
 +             // The battle-status atlas stores colored labels and icons on transparent black.
 +             // Linear enlargement blends their RGB toward black, so recover straight color
-+             // before tightening only the coverage transition. This keeps Lv/HP/EXP crisp
-+             // without recoloring the surrounding HUD artwork.
++             // before applying the broad antialiased coverage transition.
 +             "  float3 straight_color = source.a > 0.001f ? "
 +             "clamp(source.rgb / source.a, 0.0f, 1.0f) : float3(0.0f, 0.0f, 0.0f);\n"
 +             "  float coverage = smoothstep({:.2f}f, {:.2f}f, source.a);\n"
@@ -1241,6 +1347,77 @@ index c97fec8991..5c3e186b54 100644
  std::string GenerateResolveColorPixelShader(u32 samples);
  std::string GenerateResolveDepthPixelShader(u32 samples);
  std::string GenerateClearVertexShader();
+diff --git a/Source/Core/VideoCommon/HiresTextures.cpp b/Source/Core/VideoCommon/HiresTextures.cpp
+index 869671e1eb..4db9a93176 100644
+--- a/Source/Core/VideoCommon/HiresTextures.cpp
++++ b/Source/Core/VideoCommon/HiresTextures.cpp
+@@ -85,8 +85,8 @@ void HiresTexture::Update()
+   }
+ 
+   const std::string& game_id = SConfig::GetInstance().GetGameID();
+-  const std::set<std::string> texture_directories =
+-      GetTextureDirectoriesWithGameId(File::GetUserPath(D_HIRESTEXTURES_IDX), game_id);
++  const std::vector<std::string> texture_directories =
++      GetHiresTextureDirectoriesWithGameId(File::GetUserPath(D_HIRESTEXTURES_IDX), game_id);
+   constexpr auto extensions = std::to_array<std::string_view>({".png", ".dds"});
+ 
+   for (const auto& texture_directory : texture_directories)
+@@ -205,13 +205,9 @@ std::set<std::string> GetTextureDirectoriesWithGameId(const std::string& root_di
+   }
+   else
+   {
+-    // If there's no directory with the region-specific ID, look for a 3-character region-free one
+     const std::string region_free_directory = root_directory + game_id.substr(0, 3);
+-
+     if (File::Exists(region_free_directory))
+-    {
+       result.insert(region_free_directory);
+-    }
+   }
+ 
+   const auto match_gameid_or_all = [game_id](const std::string& filename) {
+@@ -238,3 +234,28 @@ std::set<std::string> GetTextureDirectoriesWithGameId(const std::string& root_di
+ 
+   return result;
+ }
++
++std::vector<std::string> GetHiresTextureDirectoriesWithGameId(const std::string& root_directory,
++                                                              const std::string& game_id)
++{
++  std::vector<std::string> result;
++  const auto append_unique = [&result](const std::string& directory) {
++    if (std::ranges::find(result, directory) == result.end())
++      result.push_back(directory);
++  };
++
++  const std::string region_specific_directory = root_directory + game_id;
++  if (File::Exists(region_specific_directory))
++    append_unique(region_specific_directory);
++
++  // A broad region-free pack fills gaps left by the smaller region-specific
++  // override set. HiresTexture::Update keeps the first file for a texture hash.
++  const std::string region_free_directory = root_directory + game_id.substr(0, 3);
++  if (File::Exists(region_free_directory))
++    append_unique(region_free_directory);
++
++  for (const std::string& directory : GetTextureDirectoriesWithGameId(root_directory, game_id))
++    append_unique(directory);
++
++  return result;
++}
+diff --git a/Source/Core/VideoCommon/HiresTextures.h b/Source/Core/VideoCommon/HiresTextures.h
+index f577aebd78..2ca099ed9c 100644
+--- a/Source/Core/VideoCommon/HiresTextures.h
++++ b/Source/Core/VideoCommon/HiresTextures.h
+@@ -19,6 +19,8 @@ enum class TextureFormat;
+ 
+ std::set<std::string> GetTextureDirectoriesWithGameId(const std::string& root_directory,
+                                                       const std::string& game_id);
++std::vector<std::string> GetHiresTextureDirectoriesWithGameId(const std::string& root_directory,
++                                                              const std::string& game_id);
+ 
+ class HiresTexture
+ {
 diff --git a/Source/Core/VideoCommon/OnScreenUI.cpp b/Source/Core/VideoCommon/OnScreenUI.cpp
 index 451109bbeb..7d7b6d8f96 100644
 --- a/Source/Core/VideoCommon/OnScreenUI.cpp
@@ -1300,6 +1477,29 @@ index e9a14e02ba..5ed2eb22d1 100644
  // OnScreenUI handles all the ImGui rendering.
  class OnScreenUI
  {
+diff --git a/Source/Core/VideoCommon/Present.cpp b/Source/Core/VideoCommon/Present.cpp
+index 7c62730667..e49259f533 100644
+--- a/Source/Core/VideoCommon/Present.cpp
++++ b/Source/Core/VideoCommon/Present.cpp
+@@ -15,6 +15,7 @@
+ 
+ #include "Present.h"
+ #include "VideoCommon/AbstractGfx.h"
++#include "VideoCommon/ColosseumProjection.h"
+ #include "VideoCommon/FrameDumper.h"
+ #include "VideoCommon/FramebufferManager.h"
+ #include "VideoCommon/OnScreenUI.h"
+@@ -494,7 +495,9 @@ float Presenter::CalculateDrawAspectRatio(bool allow_stretch) const
+     // The actual aspect ratio of the XFB texture is irrelevant, the VI one is the one that matters
+     const auto& vi = Core::System::GetInstance().GetVideoInterface();
+     const float vi_aspect_ratio = vi.GetAspectRatio();
+-    const float source_aspect_ratio = AdjustAspectRatioForCustomCrop(vi_aspect_ratio);
++    const float source_aspect_ratio = GetColosseumPresentationAspect(
++        AdjustAspectRatioForCustomCrop(vi_aspect_ratio),
++        g_ActiveConfig.bWidescreenAuthoredMenu);
+ 
+     // This will scale up the source ~4:3 resolution to its equivalent ~16:9 resolution
+     if (aspect_mode == AspectMode::ForceWide ||
 diff --git a/Source/Core/VideoCommon/ShaderCache.cpp b/Source/Core/VideoCommon/ShaderCache.cpp
 index 565e4f42f8..428ab9d66e 100644
 --- a/Source/Core/VideoCommon/ShaderCache.cpp
@@ -1560,7 +1760,7 @@ index d596f84e5e..b6f7c70080 100644
    // Flushes all pending EFB copies to emulated RAM.
    void FlushEFBCopies();
 diff --git a/Source/Core/VideoCommon/VertexShaderManager.cpp b/Source/Core/VideoCommon/VertexShaderManager.cpp
-index 6d69803827..85cb48008a 100644
+index 6d69803827..52e06796c1 100644
 --- a/Source/Core/VideoCommon/VertexShaderManager.cpp
 +++ b/Source/Core/VideoCommon/VertexShaderManager.cpp
 @@ -3,6 +3,7 @@
@@ -1571,7 +1771,15 @@ index 6d69803827..85cb48008a 100644
  #include <array>
  #include <cmath>
  #include <cstring>
-@@ -49,9 +50,26 @@ Common::Matrix44 VertexShaderManager::LoadProjectionMatrix()
+@@ -14,6 +15,7 @@
+ #include "Common/Matrix.h"
+ #include "VideoCommon/BPFunctions.h"
+ #include "VideoCommon/BPMemory.h"
++#include "VideoCommon/ColosseumProjection.h"
+ #include "VideoCommon/CPMemory.h"
+ #include "VideoCommon/FramebufferManager.h"
+ #include "VideoCommon/FreeLookCamera.h"
+@@ -49,9 +51,44 @@ Common::Matrix44 VertexShaderManager::LoadProjectionMatrix()
      const Common::Vec2 fov_multiplier = g_freelook_camera.IsActive() ?
                                              g_freelook_camera.GetFieldOfViewMultiplier() :
                                              Common::Vec2{1, 1};
@@ -1587,9 +1795,27 @@ index 6d69803827..85cb48008a 100644
 +        rawProjection[0] != 0.0f ? std::abs(rawProjection[2] / rawProjection[0]) : 0.0f;
 +    const bool is_cached_widescreen_projection =
 +        raw_aspect >= 1.6f && raw_aspect <= 2.0f;
++    const bool square_offscreen_viewport =
++        g_ActiveConfig.bWidescreenHudSafeArea &&
++        VideoCommon::IsColosseumSquareOffscreenViewport(xfmem.viewport.wd,
++                                                        xfmem.viewport.ht);
++    const float authored_projection_scale =
++        std::clamp(g_ActiveConfig.fWidescreenHudSafeAreaScale, 0.25f, 1.0f);
++    const float offscreen_projection_scale = 1.0f / authored_projection_scale;
++    const float authored_menu_scale = std::max(
++        VideoCommon::GetColosseumAuthoredMenuHorizontalScale(
++            raw_aspect, g_ActiveConfig.bWidescreenAuthoredMenu),
++        g_ActiveConfig.bWidescreenAuthoredMenu ?
++            VideoCommon::COLOSSEUM_AUTHORED_MENU_MINIMUM_SCALE :
++            1.0f);
++    const float naming_scale = VideoCommon::GetColosseumNamingHorizontalScale(
++        g_ActiveConfig.bColosseumNamingPresentation);
 +    const float native_hor_plus_scale =
++        g_ActiveConfig.bColosseumNamingPresentation ? naming_scale :
++        g_ActiveConfig.bWidescreenAuthoredMenu ? authored_menu_scale :
++        square_offscreen_viewport ? offscreen_projection_scale :
 +        g_ActiveConfig.bWidescreenHudSafeArea && is_cached_widescreen_projection ?
-+            std::clamp(g_ActiveConfig.fWidescreenHudSafeAreaScale, 0.25f, 1.0f) :
++            authored_projection_scale :
 +            1.0f;
 +    const float horizontal_scale =
 +        g_ActiveConfig.fAspectRatioHackW * fov_multiplier.x * native_hor_plus_scale;
@@ -1600,19 +1826,30 @@ index 6d69803827..85cb48008a 100644
      m_projection_matrix[3] = 0.0f;
  
      m_projection_matrix[4] = 0.0f;
-@@ -76,6 +94,10 @@ Common::Matrix44 VertexShaderManager::LoadProjectionMatrix()
+@@ -76,10 +113,19 @@ Common::Matrix44 VertexShaderManager::LoadProjectionMatrix()
  
    case ProjectionType::Orthographic:
    {
+-    m_projection_matrix[0] = rawProjection[0];
 +    // Colosseum composites the perspective world and its 2D overlays through
 +    // the same orthographic full-screen quad. Scaling this projection shrinks
 +    // the whole camera and exposes stale EFB regions, so preserve it verbatim.
-+    // Complete menu canvases are handled by the presenter instead.
-     m_projection_matrix[0] = rawProjection[0];
++    // Complete menu canvases are handled by the presenter instead. The naming
++    // screen is the one exception: its confirmation panels were authored out
++    // to x=660 for a 602-pixel VI aperture, so center the complete 640-pixel
++    // composition with the matching 602/640 horizontal scale.
++    const float naming_scale = VideoCommon::GetColosseumNamingHorizontalScale(
++        g_ActiveConfig.bColosseumNamingPresentation);
++    m_projection_matrix[0] = rawProjection[0] * naming_scale;
      m_projection_matrix[1] = 0.0f;
      m_projection_matrix[2] = 0.0f;
+-    m_projection_matrix[3] = rawProjection[1];
++    m_projection_matrix[3] = rawProjection[1] * naming_scale;
+ 
+     m_projection_matrix[4] = 0.0f;
+     m_projection_matrix[5] = rawProjection[2];
 diff --git a/Source/Core/VideoCommon/VideoConfig.cpp b/Source/Core/VideoCommon/VideoConfig.cpp
-index a6193853f6..336027e362 100644
+index a6193853f6..15488c8951 100644
 --- a/Source/Core/VideoCommon/VideoConfig.cpp
 +++ b/Source/Core/VideoCommon/VideoConfig.cpp
 @@ -25,6 +25,7 @@
@@ -1631,7 +1868,7 @@ index a6193853f6..336027e362 100644
  
  VideoConfig g_Config;
  VideoConfig g_ActiveConfig;
-@@ -86,6 +88,10 @@ void VideoConfig::Refresh()
+@@ -86,6 +88,14 @@ void VideoConfig::Refresh()
    iUsePresentDrawable = Config::Get(Config::GFX_MTL_USE_PRESENT_DRAWABLE);
  
    bWidescreenHack = Config::Get(Config::GFX_WIDESCREEN_HACK);
@@ -1639,32 +1876,43 @@ index a6193853f6..336027e362 100644
 +      Config::Get(Config::GFX_WIDESCREEN_HUD_SAFE_AREA);
 +  fWidescreenHudSafeAreaScale =
 +      Config::Get(Config::GFX_WIDESCREEN_HUD_SAFE_AREA_SCALE);
++  bWidescreenAuthoredMenu =
++      Config::Get(Config::GFX_WIDESCREEN_AUTHORED_MENU);
++  bColosseumNamingPresentation =
++      Config::Get(Config::GFX_COLOSSEUM_NAMING_PRESENTATION);
    aspect_mode = Config::Get(Config::GFX_ASPECT_RATIO);
    custom_aspect_width = Config::Get(Config::GFX_CUSTOM_ASPECT_RATIO_WIDTH);
    custom_aspect_height = Config::Get(Config::GFX_CUSTOM_ASPECT_RATIO_HEIGHT);
-@@ -307,6 +313,9 @@ void CheckForConfigChanges()
+@@ -307,6 +317,13 @@ void CheckForConfigChanges()
    const AspectMode old_aspect_mode = g_ActiveConfig.aspect_mode;
    const AspectMode old_suggested_aspect_mode = g_ActiveConfig.suggested_aspect_mode;
    const bool old_widescreen_hack = g_ActiveConfig.bWidescreenHack;
 +  const bool old_widescreen_hud_safe_area = g_ActiveConfig.bWidescreenHudSafeArea;
 +  const float old_widescreen_hud_safe_area_scale =
 +      g_ActiveConfig.fWidescreenHudSafeAreaScale;
++  const bool old_widescreen_authored_menu =
++      g_ActiveConfig.bWidescreenAuthoredMenu;
++  const bool old_colosseum_naming_presentation =
++      g_ActiveConfig.bColosseumNamingPresentation;
    const auto old_post_processing_shader = g_ActiveConfig.sPostProcessingShader;
    const auto old_hdr = g_ActiveConfig.bHDR;
  
-@@ -359,6 +368,11 @@ void CheckForConfigChanges()
+@@ -359,6 +376,14 @@ void CheckForConfigChanges()
      changed_bits |= CONFIG_CHANGE_BIT_ASPECT_RATIO;
    if (old_widescreen_hack != g_ActiveConfig.bWidescreenHack)
      changed_bits |= CONFIG_CHANGE_BIT_ASPECT_RATIO;
 +  const bool widescreen_hud_safe_area_changed =
 +      old_widescreen_hud_safe_area != g_ActiveConfig.bWidescreenHudSafeArea ||
-+      old_widescreen_hud_safe_area_scale != g_ActiveConfig.fWidescreenHudSafeAreaScale;
++      old_widescreen_hud_safe_area_scale != g_ActiveConfig.fWidescreenHudSafeAreaScale ||
++      old_widescreen_authored_menu != g_ActiveConfig.bWidescreenAuthoredMenu ||
++      old_colosseum_naming_presentation !=
++          g_ActiveConfig.bColosseumNamingPresentation;
 +  if (widescreen_hud_safe_area_changed)
 +    changed_bits |= CONFIG_CHANGE_BIT_ASPECT_RATIO;
    if (old_post_processing_shader != g_ActiveConfig.sPostProcessingShader)
      changed_bits |= CONFIG_CHANGE_BIT_POST_PROCESSING_SHADER;
    if (old_hdr != g_ActiveConfig.bHDR)
-@@ -384,6 +398,13 @@ void CheckForConfigChanges()
+@@ -384,6 +409,13 @@ void CheckForConfigChanges()
      pixel_shader_manager.Dirty();
    }
  
@@ -1679,15 +1927,17 @@ index a6193853f6..336027e362 100644
    if (changed_bits & (CONFIG_CHANGE_BIT_HOST_CONFIG | CONFIG_CHANGE_BIT_MULTISAMPLES))
    {
 diff --git a/Source/Core/VideoCommon/VideoConfig.h b/Source/Core/VideoCommon/VideoConfig.h
-index ec06f4a606..62e9044b20 100644
+index ec06f4a606..c4368f223a 100644
 --- a/Source/Core/VideoCommon/VideoConfig.h
 +++ b/Source/Core/VideoCommon/VideoConfig.h
-@@ -198,6 +198,8 @@ struct VideoConfig final
+@@ -198,6 +198,10 @@ struct VideoConfig final
    bool bVSync = false;
    bool bVSyncActive = false;
    bool bWidescreenHack = false;
 +  bool bWidescreenHudSafeArea = false;
 +  float fWidescreenHudSafeAreaScale = 1.0f;
++  bool bWidescreenAuthoredMenu = false;
++  bool bColosseumNamingPresentation = false;
    AspectMode aspect_mode{};
    int custom_aspect_width = 1;
    int custom_aspect_height = 1;
