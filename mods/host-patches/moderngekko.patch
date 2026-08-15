@@ -299,7 +299,7 @@ index 5ba5853..c25ecd9 100644
    bool headless = false;
    bool fullscreen = false;
 diff --git a/src/runtime/dolphin_runtime.cpp b/src/runtime/dolphin_runtime.cpp
-index 4579a77..cc5ea59 100644
+index 4579a77..68f6a39 100644
 --- a/src/runtime/dolphin_runtime.cpp
 +++ b/src/runtime/dolphin_runtime.cpp
 @@ -1,15 +1,26 @@
@@ -377,7 +377,7 @@ index 4579a77..cc5ea59 100644
  
  namespace {
  static_assert(sizeof(ModernGekkoModuleDesc) == sizeof(StaticRecompModuleDesc));
-@@ -51,41 +84,2096 @@ std::unique_ptr<BootSessionData> s_boot_session_data;
+@@ -51,41 +84,2109 @@ std::unique_ptr<BootSessionData> s_boot_session_data;
  u64 s_previous_net_wait_ns = 0;
  double s_net_wait_ms_per_second = 0.0;
  std::chrono::steady_clock::time_point s_previous_net_wait_sample;
@@ -485,6 +485,19 @@ index 4579a77..cc5ea59 100644
 +  bool pending_movie_aspect = false;
 +  bool pending_menu_edge_fill = false;
 +  int presentation_stable_fields = 0;
++  // Fields remaining before the naming state is released. The confirmation
++  // dialog blinks its UI message, so the raw predicate cannot be trusted from
++  // one field to the next.
++  int naming_hold_fields = 0;
++  // Guards against a signal that never holds still: without this, a tuple that
++  // keeps changing would never reach the stable threshold and the presented
++  // state would stay frozen at whatever it held when the game loaded.
++  int presentation_fields_since_apply = 0;
++  // The guest widescreen multiplier, decided once on the CPU thread from the
++  // debounced state. The video thread enforces this value rather than deriving
++  // its own: this word scales the 3D model, so two threads sampling the flags
++  // at different instants made the character visibly flicker between aspects.
++  std::atomic<u32> guest_projection_bits{std::bit_cast<u32>(1.0f)};
 +  std::atomic<bool> published_menu_active{false};
 +  std::atomic<bool> published_naming_presentation{false};
 +  std::atomic<bool> published_gameplay_ultrawide{false};
@@ -2505,7 +2518,7 @@ index 4579a77..cc5ea59 100644
  
  std::vector<std::string> Host_GetPreferredLocales() { return {}; }
  void Host_PPCSymbolsChanged() {}
-@@ -140,12 +2228,672 @@ struct Runtime::Impl {
+@@ -140,12 +2241,672 @@ struct Runtime::Impl {
    std::unique_ptr<Platform> platform;
    std::unique_ptr<ModManager> mods;
    Common::EventHook state_hook;
@@ -3178,7 +3191,7 @@ index 4579a77..cc5ea59 100644
  namespace detail {
  void SetExternalUICommon(bool external) {
    std::lock_guard lock(s_runtime_mutex);
-@@ -235,12 +2983,39 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -235,12 +2996,39 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    for (const LoadedModInfo &mod : mod_report.loaded)
      std::fprintf(stderr, "mod loaded: %s %s\n", mod.id.c_str(),
                   mod.version.c_str());
@@ -3218,7 +3231,7 @@ index 4579a77..cc5ea59 100644
    Config::SetBase(Config::MAIN_FULLSCREEN, impl->config.fullscreen);
  
    if (impl->config.headless)
-@@ -281,6 +3056,26 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -281,6 +3069,26 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    if (impl->config.graphics.internal_resolution_scale)
      Config::SetBase(Config::GFX_EFB_SCALE,
                      *impl->config.graphics.internal_resolution_scale);
@@ -3245,7 +3258,7 @@ index 4579a77..cc5ea59 100644
    Config::SetBase(Config::GFX_SHADER_CACHE, true);
    Config::SetBase(Config::GFX_SHADER_COMPILATION_MODE,
                    ShaderCompilationMode::AsynchronousUberShaders);
-@@ -304,6 +3099,12 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -304,6 +3112,12 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    Config::SetBase(Config::MAIN_AUDIO_BACKEND, impl->config.audio.backend);
    Config::SetBase(Config::MAIN_INPUT_BACKGROUND_INPUT,
                    impl->config.input.background_input);
@@ -3258,7 +3271,7 @@ index 4579a77..cc5ea59 100644
  
    auto &jit = Core::System::GetInstance().GetJitInterface();
    StaticRecompModuleSource recomp_source;
-@@ -332,11 +3133,25 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -332,11 +3146,25 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
  
  Runtime::~Runtime() {
    RequestStop();
@@ -3284,7 +3297,7 @@ index 4579a77..cc5ea59 100644
    if (m_impl->controllers_initialized)
      UICommon::ShutdownControllers();
    if (m_impl->ui_initialized)
-@@ -359,17 +3174,17 @@ RuntimeRunResult Runtime::Run() {
+@@ -359,17 +3187,17 @@ RuntimeRunResult Runtime::Run() {
      std::lock_guard lock(s_runtime_mutex);
      if (s_boot_session_data)
        boot = BootParameters::GenerateFromFile(
@@ -3306,7 +3319,7 @@ index 4579a77..cc5ea59 100644
      s_boot_session_data.reset();
    }
    if (!boot) {
-@@ -378,19 +3193,577 @@ RuntimeRunResult Runtime::Run() {
+@@ -378,19 +3206,602 @@ RuntimeRunResult Runtime::Run() {
              RuntimeError{RuntimeErrorCode::BootFailed,
                           "Dolphin rejected the extracted disc"}};
    }
@@ -3431,29 +3444,16 @@ index 4579a77..cc5ea59 100644
 +          // vi_end_field, and older savestates can restore it as zero. Enforce
 +          // a safe projection immediately before the first draw; established
 +          // gameplay keeps Hor+ even while navigation telemetry is unavailable.
-+          const bool widescreen_enabled =
-+              m_impl->navigation_overlay.widescreen_enabled.load(
-+                  std::memory_order_relaxed);
-+          const bool authored_menu_active =
-+              m_impl->navigation_overlay.authored_menu_active.load(
++          //
++          // Enforce the value the CPU thread decided; do not re-derive it. This
++          // callback used to recompute gameplay_ultrawide from the raw,
++          // undebounced flags, so it fought the settled decision once per frame
++          // and the character model flickered between aspects for the whole
++          // transition. Its job is to keep the word from being clobbered, not
++          // to have an opinion about what the word should be.
++          const u32 projection_bits =
++              m_impl->navigation_overlay.guest_projection_bits.load(
 +                  std::memory_order_acquire);
-+          const bool movie_active =
-+              m_impl->navigation_overlay.movie_active.load(
-+                  std::memory_order_acquire);
-+          const bool live_title_scene_active =
-+              m_impl->navigation_overlay.live_title_scene_active.load(
-+                  std::memory_order_acquire);
-+          const bool gameplay_ultrawide =
-+              automation::ShouldUseColosseumUltrawideProjection(
-+                  widescreen_enabled,
-+                  m_impl->navigation_overlay.ultrawide_gameplay_started.load(
-+                      std::memory_order_relaxed),
-+                  authored_menu_active, live_title_scene_active, movie_active);
-+          const NativeUltrawideTarget target = GetNativeUltrawideTarget();
-+          const float guest_projection_aspect =
-+              gameplay_ultrawide ? target.aspect : kAuthoredGameAspect;
-+          const u32 projection_bits = std::bit_cast<u32>(
-+              guest_projection_aspect / kAuthoredGameAspect);
 +          auto& memory = Core::System::GetInstance().GetMemory();
 +          if (memory.Read_U32(0x8047E724) != projection_bits)
 +            memory.Write_U32(projection_bits, 0x8047E724);
@@ -3541,9 +3541,29 @@ index 4579a77..cc5ea59 100644
 +              automation::IsColosseumMoviePlaybackActive(
 +                  memory.Read_U8(movie_ready_address),
 +                  memory.Read_U8(movie_open_address));
-+          const bool character_naming_active =
++          // The confirmation dialog alternates its UI message between 0x0069
++          // and 0x00ce while the player is still on the naming screen, so the
++          // raw predicate blinks and every consumer downstream blinks with it.
++          // Hold the naming state across those gaps and release it only after a
++          // sustained absence: entering is immediate, leaving takes ~0.4 s.
++          // A symmetric N-of-N debounce cannot fix this -- the signal never
++          // holds still long enough to satisfy one, which froze the presented
++          // state instead of settling it.
++          constexpr int kNamingHoldFields = 24;
++          const bool character_naming_observed =
 +              automation::IsColosseumCharacterNamingState(
 +                  active_ui_message_id, menu_active);
++          if (character_naming_observed)
++          {
++            m_impl->navigation_overlay.naming_hold_fields = kNamingHoldFields;
++          }
++          else if (m_impl->navigation_overlay.naming_hold_fields > 0)
++          {
++            --m_impl->navigation_overlay.naming_hold_fields;
++          }
++          const bool character_naming_active =
++              character_naming_observed ||
++              m_impl->navigation_overlay.naming_hold_fields > 0;
 +          const bool battle_now_active =
 +              automation::IsColosseumBattleNowMenu(active_ui_message_id);
 +          const bool battle_gameplay_message =
@@ -3656,13 +3676,15 @@ index 4579a77..cc5ea59 100644
 +              movie_active, std::memory_order_release);
 +          m_impl->navigation_overlay.live_title_scene_active.store(
 +              live_title_scene_active, std::memory_order_release);
++          // Computed here, but published from the debounced block below rather
++          // than stored immediately: this drives the side-fill the video thread
++          // draws, and publishing the raw observation made the margins flash
++          // independently of the aspect they are supposed to frame.
 +          const auto authored_backdrop =
 +              automation::ResolveColosseumAuthoredBackdrop(
 +                  m_impl->navigation_overlay.widescreen_enabled.load(
 +                      std::memory_order_relaxed),
 +                  movie_active, character_naming_active);
-+          m_impl->navigation_overlay.authored_backdrop.store(
-+              static_cast<int>(authored_backdrop), std::memory_order_release);
 +          if (m_impl->navigation_overlay.input_overlay_enabled.load(
 +                  std::memory_order_relaxed))
 +          {
@@ -3760,8 +3782,14 @@ index 4579a77..cc5ea59 100644
 +            {
 +              ++overlay.presentation_stable_fields;
 +            }
++            // If the observation never holds still, prefer a late update to a
++            // frozen one: after this many fields, act on what we last saw.
++            constexpr int kPresentationForceApplyFields = 90;
++            ++overlay.presentation_fields_since_apply;
 +            const bool presentation_settled =
-+                overlay.presentation_stable_fields >= kPresentationStableFields;
++                overlay.presentation_stable_fields >= kPresentationStableFields ||
++                overlay.presentation_fields_since_apply >=
++                    kPresentationForceApplyFields;
 +            if (cache_invalidated ||
 +                (presentation_settled &&
 +                (authored_menu_active !=
@@ -3777,6 +3805,7 @@ index 4579a77..cc5ea59 100644
 +                menu_edge_fill !=
 +                    m_impl->navigation_overlay.menu_edge_fill_active)))
 +            {
++              m_impl->navigation_overlay.presentation_fields_since_apply = 0;
 +              m_impl->navigation_overlay.menu_aspect_active = authored_menu_active;
 +              m_impl->navigation_overlay.menu_projection_active =
 +                  authored_projection_active;
@@ -3785,6 +3814,8 @@ index 4579a77..cc5ea59 100644
 +              m_impl->navigation_overlay.field_aspect_active = gameplay_ultrawide;
 +              m_impl->navigation_overlay.movie_aspect_active = movie_active;
 +              m_impl->navigation_overlay.menu_edge_fill_active = menu_edge_fill;
++              m_impl->navigation_overlay.authored_backdrop.store(
++                  static_cast<int>(authored_backdrop), std::memory_order_release);
 +              Config::SetCurrent(Config::GFX_WIDESCREEN_HUD_SAFE_AREA,
 +                                 gameplay_ultrawide);
 +              Config::SetCurrent(Config::GFX_WIDESCREEN_AUTHORED_MENU,
@@ -3808,10 +3839,17 @@ index 4579a77..cc5ea59 100644
 +            // Complete 2D menu canvases need ForceStandard presentation only.
 +            // Character naming additionally contains a 3D model and therefore
 +            // keeps the authored projection correction.
++            // Follow the debounced presentation, not the raw observation: the
++            // mirror is only updated once the state has settled, so the model
++            // scale changes exactly when the aspect does.
++            const bool settled_gameplay_ultrawide =
++                m_impl->navigation_overlay.field_aspect_active;
 +            const float guest_projection_aspect =
-+                gameplay_ultrawide ? target.aspect : kAuthoredGameAspect;
++                settled_gameplay_ultrawide ? target.aspect : kAuthoredGameAspect;
 +            const u32 projection_bits = std::bit_cast<u32>(
 +                guest_projection_aspect / kAuthoredGameAspect);
++            m_impl->navigation_overlay.guest_projection_bits.store(
++                projection_bits, std::memory_order_release);
 +            if (memory.Read_U32(0x8047E724) != projection_bits)
 +              memory.Write_U32(projection_bits, 0x8047E724);
 +            const float previous_aspect =
@@ -3884,7 +3922,7 @@ index 4579a77..cc5ea59 100644
    std::jthread title_thread;
    if (!m_impl->config.headless && m_impl->config.show_fps_in_title) {
      title_thread = std::jthread([](std::stop_token stop_token) {
-@@ -402,14 +3775,30 @@ RuntimeRunResult Runtime::Run() {
+@@ -402,14 +3813,30 @@ RuntimeRunResult Runtime::Run() {
      });
    }
    m_impl->platform->MainLoop();
