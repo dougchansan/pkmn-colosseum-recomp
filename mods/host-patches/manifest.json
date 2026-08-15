@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-12",
+  "generatedAt": "2026-08-15",
   "dolRecomp": {
     "repository": "https://github.com/ExpansionPak/DolRecomp.git",
     "ref": "main",
@@ -11,7 +11,7 @@
     "ref": "master",
     "baseCommit": "884c20505d7179160f8bb01d9db0f723c53b09cb",
     "patch": "moderngekko.patch",
-      "sha256": "D81E8B9CA5808DF114CD4DCDE90A9AF416F39671F5E8A0F7CD3269C069EA458E"
+      "sha256": "B2E37435E0CFE27DB0588C7848989940B13795E73AAB8A0F86BDCAF40F229FAF"
   },
   "recompCore": {
     "repository": "https://github.com/ExpansionPak/RecompCore.git",
