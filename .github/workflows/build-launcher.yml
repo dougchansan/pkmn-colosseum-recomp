@@ -118,6 +118,8 @@ jobs:
             -DBUILD_TESTING=OFF \
             -DCMAKE_C_FLAGS="${{ steps.trim.outputs.cflags }}" \
             -DCMAKE_CXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            -DCMAKE_OBJC_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            -DCMAKE_OBJCXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
             '-DMODERNGEKKO_FRONTEND_NAME=Pokemon Colosseum Recomp' \
             -DMODERNGEKKO_LAUNCHER_OUTPUT_NAME=PokemonColosseumRecomp \
             -DMODERNGEKKO_RUNNER_OUTPUT_NAME=moderngekko-run \
@@ -145,6 +147,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_FLAGS="${{ steps.trim.outputs.cflags }}" \
             -DCMAKE_CXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            -DCMAKE_OBJC_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            -DCMAKE_OBJCXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
             "-DMODERNGEKKO_SOURCE_DIR=$GITHUB_WORKSPACE/lib/ModernGekko"
           cmake --build build/mods --parallel 4
 
