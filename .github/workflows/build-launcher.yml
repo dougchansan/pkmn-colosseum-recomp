@@ -178,8 +178,15 @@ jobs:
 
           # Project HD text textures only. The community HD pack is a separate
           # ~690 MB download and is deliberately not bundled.
+          # Optional: the textures are not committed on every branch, and an
+          # artifact without them is still a valid launcher.
           mkdir -p "$DEST/User/Load/Textures"
-          cp -R assets/hd-textures/GC6E01 "$DEST/User/Load/Textures/"
+          if [ -d assets/hd-textures/GC6E01 ]; then
+            cp -R assets/hd-textures/GC6E01 "$DEST/User/Load/Textures/"
+            echo "bundled $(find assets/hd-textures/GC6E01 -type f | wc -l) HD text textures"
+          else
+            echo "::notice::assets/hd-textures/GC6E01 absent on this ref; artifact ships without HD text textures"
+          fi
 
           # Empty runtime scaffolding; no savestates, memory cards or configs.
           mkdir -p "$DEST/User/Config" "$DEST/User/GameSettings" \
