@@ -7177,10 +7177,3 @@ index 476c77f..eb99351 100644
      }
    }
    if (!module_path.empty())
-diff --git a/vendor/dolphin b/vendor/dolphin
-index 13e4920..5142345 160000
---- a/vendor/dolphin
-+++ b/vendor/dolphin
-@@ -1 +1 @@
--Subproject commit 13e492094902644b0d113c586300d358640f9e19
-+Subproject commit 5142345ce9b1dd180ef7df21f4596842c51755ec-dirty

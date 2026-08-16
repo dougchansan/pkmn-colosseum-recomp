@@ -1760,7 +1760,7 @@ index d596f84e5e..b6f7c70080 100644
    // Flushes all pending EFB copies to emulated RAM.
    void FlushEFBCopies();
 diff --git a/Source/Core/VideoCommon/VertexShaderManager.cpp b/Source/Core/VideoCommon/VertexShaderManager.cpp
-index 6d69803827..52e06796c1 100644
+index 6d69803827..6a0bbd762d 100644
 --- a/Source/Core/VideoCommon/VertexShaderManager.cpp
 +++ b/Source/Core/VideoCommon/VertexShaderManager.cpp
 @@ -3,6 +3,7 @@
@@ -1779,7 +1779,7 @@ index 6d69803827..52e06796c1 100644
  #include "VideoCommon/CPMemory.h"
  #include "VideoCommon/FramebufferManager.h"
  #include "VideoCommon/FreeLookCamera.h"
-@@ -49,9 +51,44 @@ Common::Matrix44 VertexShaderManager::LoadProjectionMatrix()
+@@ -49,9 +51,52 @@ Common::Matrix44 VertexShaderManager::LoadProjectionMatrix()
      const Common::Vec2 fov_multiplier = g_freelook_camera.IsActive() ?
                                              g_freelook_camera.GetFieldOfViewMultiplier() :
                                              Common::Vec2{1, 1};
@@ -1801,7 +1801,15 @@ index 6d69803827..52e06796c1 100644
 +                                                        xfmem.viewport.ht);
 +    const float authored_projection_scale =
 +        std::clamp(g_ActiveConfig.fWidescreenHudSafeAreaScale, 0.25f, 1.0f);
-+    const float offscreen_projection_scale = 1.0f / authored_projection_scale;
++    // Colosseum renders its character and world shadows through a square
++    // offscreen viewport. That buffer is authored square and is sampled back
++    // through a projector, so its frustum has nothing to do with the output
++    // aspect: it must pass through untouched. Scaling it by the inverse safe
++    // area (which is what this branch used to do) stretched every shadow
++    // horizontally by 1/scale - 2x at 32:9 - and amplified the shadow camera's
++    // own per-draw aspect drift by the same factor, which read on screen as
++    // shadows swinging back and forth on a completely static scene.
++    constexpr float offscreen_projection_scale = 1.0f;
 +    const float authored_menu_scale = std::max(
 +        VideoCommon::GetColosseumAuthoredMenuHorizontalScale(
 +            raw_aspect, g_ActiveConfig.bWidescreenAuthoredMenu),
@@ -1826,7 +1834,7 @@ index 6d69803827..52e06796c1 100644
      m_projection_matrix[3] = 0.0f;
  
      m_projection_matrix[4] = 0.0f;
-@@ -76,10 +113,19 @@ Common::Matrix44 VertexShaderManager::LoadProjectionMatrix()
+@@ -76,10 +121,19 @@ Common::Matrix44 VertexShaderManager::LoadProjectionMatrix()
  
    case ProjectionType::Orthographic:
    {
