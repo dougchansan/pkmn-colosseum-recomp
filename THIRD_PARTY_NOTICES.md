@@ -1,6 +1,6 @@
 # Third-party notices
 
-Pokemon Colosseum Recomp version 1.0.0 combines original project source and
+Pokemon Colosseum Recomp version 1.1.0 combines original project source and
 patches with upstream open-source projects that are fetched at setup time.
 Copyright and license notices in upstream source files remain in effect.
 
@@ -28,6 +28,14 @@ The setup scripts identify the upstream revisions used by this release and
 apply the game-specific host patches. When distributing object code, provide
 the matching source snapshot, this notice, the full GPL license, build
 instructions, and clear access to the corresponding upstream source.
+
+## Optional community assets
+
+The community HD texture pack for Pokemon Colosseum is the work of **Sephie**
+and is published by its author at <https://www.reddit.com/r/DolphinEmulator/s/IgXkBDodBC>.
+It is **not** distributed with this project in source or binary form; the
+launcher only loads it if a player installs it themselves. All rights in that
+pack remain with its author.
 
 ## Game data and marks
 

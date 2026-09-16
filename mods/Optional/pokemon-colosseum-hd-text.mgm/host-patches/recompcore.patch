@@ -1,0 +1,3196 @@
+diff --git a/.gitignore b/.gitignore
+index 1270b78a8a..46c3d828ef 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -54,3 +54,7 @@ CMakeLists.txt.user
+ StrikersRecomp/generated_smc.txt
+ StrikersRecomp/generated.c
+ StrikersRecomp/generated.h
++
++# Python-generated cache files
++__pycache__/
++*.pyc
+diff --git a/CMake/ScmRevGen.cmake b/CMake/ScmRevGen.cmake
+index baa2d0ae41..d2ff767314 100644
+--- a/CMake/ScmRevGen.cmake
++++ b/CMake/ScmRevGen.cmake
+@@ -18,10 +18,32 @@ if(GIT_FOUND)
+   execute_process(WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} COMMAND ${GIT_EXECUTABLE} rev-parse --abbrev-ref HEAD
+       OUTPUT_VARIABLE DOLPHIN_WC_BRANCH
+       OUTPUT_STRIP_TRAILING_WHITESPACE)
+-  # defines DOLPHIN_WC_COMMITS_AHEAD_MASTER
+-  execute_process(WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} COMMAND ${GIT_EXECUTABLE} rev-list --count HEAD ^master
++  # defines DOLPHIN_WC_COMMITS_AHEAD_MASTER. RecompCore uses main, while
++  # upstream Dolphin and older clones may still expose master. Submodule
++  # checkouts are normally detached, so accept the remote-tracking forms too.
++  unset(_dolphin_base_ref)
++  foreach(_candidate master main origin/master origin/main)
++    if(NOT _dolphin_base_ref)
++      execute_process(
++        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
++        COMMAND ${GIT_EXECUTABLE} rev-parse --verify --quiet ${_candidate}
++        RESULT_VARIABLE _candidate_result
++        OUTPUT_QUIET
++        ERROR_QUIET)
++      if(_candidate_result EQUAL 0)
++        set(_dolphin_base_ref ${_candidate})
++      endif()
++    endif()
++  endforeach()
++  if(_dolphin_base_ref)
++    execute_process(
++      WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
++      COMMAND ${GIT_EXECUTABLE} rev-list --count ${_dolphin_base_ref}..HEAD
+       OUTPUT_VARIABLE DOLPHIN_WC_COMMITS_AHEAD_MASTER
+       OUTPUT_STRIP_TRAILING_WHITESPACE)
++  else()
++    set(DOLPHIN_WC_COMMITS_AHEAD_MASTER 0)
++  endif()
+ 
+   # defines DOLPHIN_WC_TAG
+   execute_process(WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} COMMAND ${GIT_EXECUTABLE} describe --exact-match HEAD
+diff --git a/Data/Sys/GameSettings/GC6E01.ini b/Data/Sys/GameSettings/GC6E01.ini
+index b42eac6ccc..8e7a605ede 100644
+--- a/Data/Sys/GameSettings/GC6E01.ini
++++ b/Data/Sys/GameSettings/GC6E01.ini
+@@ -1,5 +1,12 @@
+ # GC6E01 - Pokémon Colosseum
+ 
++[Core]
++# The startup wait loop services callbacks at 0x800D31E0 while polling a
++# four-second timebase deadline. Let CoreTiming advance to the next event at
++# the loop back-edge instead of burning millions of native dispatches.
++StaticRecompIdlePC = 0x800D31E0
++StaticRecompIdleLoopEndPC = 0x800D321C
++
+ [OnFrame]
+ # This game has extra memory card checks compared to most games,
+ # presumably to prevent Pokémon duping. These can interfere with
+diff --git a/GXRuntime/include/core/cpu.h b/GXRuntime/include/core/cpu.h
+index 65f316fc2d..40a7244d71 100644
+--- a/GXRuntime/include/core/cpu.h
++++ b/GXRuntime/include/core/cpu.h
+@@ -30,7 +30,7 @@ extern "C" {
+ //   consumes and resets it (Dolphin chassis: per-dispatch flush into
+ //   ppc_state.downcount). Hosts that do not meter guest time may ignore it
+ //   (s64: it cannot wrap in any realistic session).
+-#define GXRUNTIME_CPU_ABI_VERSION 3u
++#define GXRUNTIME_CPU_ABI_VERSION 4u
+ #define GXRUNTIME_CPU_ABI_DOLRECOMP_PREFIX 1u
+ #define GXRUNTIME_CPU_ABI_EXTERNAL_POINTER_EXTENSION 1u
+ 
+@@ -96,6 +96,25 @@ typedef void (*PPCExternalWrite32)(CPUState* cpu, u32 ea, u32 value, u8 rid);
+ typedef void* (*PPCExternalPointer)(CPUState* cpu, u32 ea, u32 size);
+ typedef void (*PPCInstructionFallback)(CPUState* cpu, u32 raw, u32 cia);
+ typedef bool (*PPCHostCall)(CPUState* cpu, u32 address);
++
++/* Native-region interception query, asked by LLVM-backend generated code at the
++   entry of every recompiled function. The generated region runs without the
++   per-instruction host-call dispatch, so before entering it the module asks the
++   host whether anything in [start, end) has to be intercepted. The address is a
++   reserved host-call number rather than a guest address; the range travels in
++   external_addr/external_value and external_rid carries the acknowledgement, so
++   no new CPUState field and no ABI change is involved. A host that does not
++   recognise the query leaves external_rid alone, which reads as "unhandled" and
++   keeps the module on the safe path. */
++/* Whole-range cache operation, issued by a native substitution for the SDK's
++   DCFlushRange family instead of one host call per 32-byte line. The range
++   travels in external_addr/external_value and the operation in external_rid.
++   Dolphin's JitInterface already collapses a line count into a single
++   InvalidateICache; going line by line is what made a range flush expensive. */
++#define PPC_HOST_CALL_CACHE_RANGE 0xFFFFFFFBu
++#define PPC_HOST_CALL_NATIVE_REGION_QUERY 0xFFFFFFFCu
++#define PPC_NATIVE_REGION_QUERY_PENDING 0xFEu
++#define PPC_NATIVE_REGION_QUERY_HANDLED 0xFFu
+ typedef u32 (*PPCSPRRead)(CPUState* cpu, u16 spr, u32 cia);
+ typedef void (*PPCSPRWrite)(CPUState* cpu, u16 spr, u32 value, u32 cia);
+ typedef void (*PPCCacheControl)(CPUState* cpu, u8 operation, u32 ea, u32 cia);
+@@ -153,6 +172,14 @@ struct CPUState {
+     u32 ram_size;
+     PPCExternalPointer external_pointer;
+     s64 downcount;
++    // ABI v4 mirrors DolRecomp's `cycle_budget`, which sits between `downcount`
++    // and `exram` in its CPUState. The field is currently reserved and unread by
++    // either side, but the LLVM backend bakes offsetof() values from DolRecomp's
++    // header straight into generated code, so omitting it shifts `exram` and
++    // everything after it by 8 bytes and an LLVM module loads garbage as the
++    // MEM2 base pointer. The C backend refers to these fields by name and never
++    // noticed. Keep this struct byte-identical to DolRecomp's cpu.h.
++    s64 cycle_budget;
+     u8* exram;
+     u32 exram_size;
+     PPCSPRRead spr_read;
+@@ -315,6 +342,121 @@ bool ppc_fctiw(CPUState* cpu, f64 value, bool toward_zero, u64* result);
+ void ppc_fadds(CPUState* cpu, u8 d, u8 a, u8 b);
+ void ppc_fsubs(CPUState* cpu, u8 d, u8 a, u8 b);
+ void ppc_fmuls(CPUState* cpu, u8 d, u8 a, u8 c);
++
++// These fast paths use __builtin_memcpy/__builtin_fma, which MSVC does not
++// provide, and only generated module code (built with clang) ever calls them --
++// the MSVC-built runtime merely includes this header. Guarding the block keeps
++// it out of MSVC translation units without pulling <math.h>/<string.h> in here,
++// which the bit-pattern approach below deliberately avoids.
++#if defined(__clang__) || defined(__GNUC__)
++/* --- Inline floating-point fast paths -------------------------------------
++ *
++ * Every guest FP instruction currently costs two or three out-of-line calls:
++ * the instruction helper, an ni_* arithmetic wrapper that returns a struct by
++ * value, and fp_write_single, plus a set_fprf/classify_f32 pair. The arithmetic
++ * underneath is already hardware FP - it is the wrapper that dominates, and the
++ * profile counts roughly 1.1e9 of these per seven-scene capture.
++ *
++ * These inline variants do the ordinary case in-line and defer to the existing
++ * helper for anything else. The guard is "result is neither NaN nor infinity",
++ * which is deliberately stronger than a NaN test: ni_add/ni_sub also clear
++ * FI/FR when an *operand* is infinite, and a finite result rules that out, so
++ * the fast path cannot skip an FPSCR side effect the helper would have applied.
++ * Denormal and NI-mode handling stays exact because force_single is still used.
++ *
++ * The _nf variants additionally skip the FPRF update. On this title that field
++ * is architecturally dead: GC6E01 contains no mcrfs and no Rc=1 FP instruction,
++ * so nothing can branch on FPCC/FPRF, and its four mffs sites each store the
++ * whole register straight to an OS context slot to be restored by mtfsf rather
++ * than inspecting fields. Skipping it therefore changes no observable guest
++ * behaviour, but it *is* an architectural divergence, which is why it is a
++ * separate opt-in level rather than folded into the above. */
++u32 classify_f32(f32 value);
++void set_fprf(CPUState* cpu, u32 value);
++f32 force_single(const CPUState* cpu, f64 value);
++f64 force_25bit_c(f64 d);
++f64 force_25_bit(f64 value);
++
++static inline bool dolrecomp_fp_ordinary(f64 value) {
++    /* True unless the value is a NaN or an infinity. Done on the bit pattern so
++     * this header does not have to pull in <math.h> or depend on the compiler's
++     * fast-math settings agreeing with the runtime's. */
++    u64 bits;
++    __builtin_memcpy(&bits, &value, sizeof(bits));
++    return (bits & 0x7FF0000000000000ull) != 0x7FF0000000000000ull;
++}
++
++#define DOLRECOMP_FP_WRITE_SINGLE(cpu, d, value)                               \
++    do {                                                                       \
++        const f32 dolrecomp_rounded = force_single((cpu), (value));            \
++        (cpu)->fpr[(d)] = dolrecomp_rounded;                                   \
++        (cpu)->ps1[(d)] = dolrecomp_rounded;                                   \
++        set_fprf((cpu), classify_f32(dolrecomp_rounded));                      \
++    } while (0)
++
++#define DOLRECOMP_FP_WRITE_SINGLE_NF(cpu, d, value)                            \
++    do {                                                                       \
++        const f32 dolrecomp_rounded = force_single((cpu), (value));            \
++        (cpu)->fpr[(d)] = dolrecomp_rounded;                                   \
++        (cpu)->ps1[(d)] = dolrecomp_rounded;                                   \
++    } while (0)
++
++#define DOLRECOMP_DEFINE_FP_FAST(suffix, WRITE_SINGLE)                         \
++    static inline void ppc_fadds##suffix(CPUState* cpu, u8 d, u8 a, u8 b) {    \
++        const f64 result = cpu->fpr[a] + cpu->fpr[b];                          \
++        if (dolrecomp_fp_ordinary(result)) {                                   \
++            WRITE_SINGLE(cpu, d, result);                                      \
++            return;                                                            \
++        }                                                                      \
++        ppc_fadds(cpu, d, a, b);                                               \
++    }                                                                          \
++    static inline void ppc_fsubs##suffix(CPUState* cpu, u8 d, u8 a, u8 b) {    \
++        const f64 result = cpu->fpr[a] - cpu->fpr[b];                          \
++        if (dolrecomp_fp_ordinary(result)) {                                   \
++            WRITE_SINGLE(cpu, d, result);                                      \
++            return;                                                            \
++        }                                                                      \
++        ppc_fsubs(cpu, d, a, b);                                               \
++    }                                                                          \
++    static inline void ppc_fmuls##suffix(CPUState* cpu, u8 d, u8 a, u8 c) {    \
++        const f64 result = cpu->fpr[a] * force_25bit_c(cpu->fpr[c]);           \
++        if (dolrecomp_fp_ordinary(result)) {                                   \
++            WRITE_SINGLE(cpu, d, result);                                      \
++            return;                                                            \
++        }                                                                      \
++        ppc_fmuls(cpu, d, a, c);                                               \
++    }                                                                          \
++    static inline bool ppc_fma##suffix(CPUState* cpu, f64 a, f64 c, f64 b,     \
++                                       bool single, bool subtract,             \
++                                       bool negative, f64* output) {           \
++        if (!single)                                                           \
++            return ppc_fma(cpu, a, c, b, single, subtract, negative, output);  \
++        const f64 addend = subtract ? -b : b;                                  \
++        const f64 wide = __builtin_fma(a, force_25_bit(c), addend);            \
++        u64 bits;                                                              \
++        __builtin_memcpy(&bits, &wide, sizeof(bits));                          \
++        /* The even-tie correction needs the helper's exact fixup sequence. */ \
++        if ((bits & 0x000000001FFFFFFFull) == 0x0000000010000000ull)           \
++            return ppc_fma(cpu, a, c, b, single, subtract, negative, output);  \
++        if (!dolrecomp_fp_ordinary(wide))                                      \
++            return ppc_fma(cpu, a, c, b, single, subtract, negative, output);  \
++        f64 result = (f64)(f32)wide;                                           \
++        if (negative)                                                          \
++            result = -result;                                                  \
++        *output = result;                                                      \
++        DOLRECOMP_FP_FMA_FPRF(cpu, result);                                    \
++        return true;                                                           \
++    }
++
++#define DOLRECOMP_FP_FMA_FPRF(cpu, result) set_fprf((cpu), classify_f32((f32)(result)))
++DOLRECOMP_DEFINE_FP_FAST(_fast, DOLRECOMP_FP_WRITE_SINGLE)
++#undef DOLRECOMP_FP_FMA_FPRF
++
++#define DOLRECOMP_FP_FMA_FPRF(cpu, result) ((void)(cpu), (void)(result))
++DOLRECOMP_DEFINE_FP_FAST(_fastnf, DOLRECOMP_FP_WRITE_SINGLE_NF)
++#undef DOLRECOMP_FP_FMA_FPRF
++#endif  // __clang__ || __GNUC__
++
+ void ppc_fdivs(CPUState* cpu, u8 d, u8 a, u8 b);
+ void ppc_fadd(CPUState* cpu, u8 d, u8 a, u8 b);
+ void ppc_fsub(CPUState* cpu, u8 d, u8 a, u8 b);
+@@ -399,6 +541,8 @@ static inline bool ppc_fp_available_inline(CPUState* cpu, u32 cia) {
+ }
+ void ppc_fallback_instruction(CPUState* cpu, u32 raw, u32 cia);
+ bool ppc_host_call(CPUState* cpu, u32 address);
++bool ppc_native_region_available(CPUState* cpu, u32 start, u32 end);
++void ppc_cache_range(CPUState* cpu, u8 operation, u32 start, u32 bytes);
+ void ppc_system_call_exception(CPUState* cpu, u32 cia);
+ void ppc_dsi_exception(CPUState* cpu, u32 ea, u32 cia, u32 dsisr);
+ void ppc_alignment_exception(CPUState* cpu, u32 ea, u32 cia);
+diff --git a/GXRuntime/src/core/cpu.c b/GXRuntime/src/core/cpu.c
+index 345b9602dd..43046fee3b 100644
+--- a/GXRuntime/src/core/cpu.c
++++ b/GXRuntime/src/core/cpu.c
+@@ -141,6 +141,40 @@ bool ppc_host_call(CPUState* cpu, u32 address) {
+     return cpu->host_call ? cpu->host_call(cpu, address) : false;
+ }
+ 
++void ppc_cache_range(CPUState* cpu, u8 operation, u32 start, u32 bytes) {
++    if (!cpu || !cpu->host_call || !bytes)
++        return;
++
++    u32 saved_addr = cpu->external_addr;
++    u32 saved_value = cpu->external_value;
++    u8 saved_rid = cpu->external_rid;
++    cpu->external_addr = start;
++    cpu->external_value = bytes;
++    cpu->external_rid = operation;
++    cpu->host_call(cpu, PPC_HOST_CALL_CACHE_RANGE);
++    cpu->external_addr = saved_addr;
++    cpu->external_value = saved_value;
++    cpu->external_rid = saved_rid;
++}
++
++bool ppc_native_region_available(CPUState* cpu, u32 start, u32 end) {
++    if (!cpu || !cpu->host_call)
++        return true;
++
++    u32 saved_addr = cpu->external_addr;
++    u32 saved_value = cpu->external_value;
++    u8 saved_rid = cpu->external_rid;
++    cpu->external_addr = start;
++    cpu->external_value = end;
++    cpu->external_rid = PPC_NATIVE_REGION_QUERY_PENDING;
++    bool blocked = cpu->host_call(cpu, PPC_HOST_CALL_NATIVE_REGION_QUERY);
++    bool handled = cpu->external_rid == PPC_NATIVE_REGION_QUERY_HANDLED;
++    cpu->external_addr = saved_addr;
++    cpu->external_value = saved_value;
++    cpu->external_rid = saved_rid;
++    return handled && !blocked;
++}
++
+ void ppc_system_call_exception(CPUState* cpu, u32 cia) {
+     ppc_take_exception(cpu, PPC_EXC_SYSTEM_CALL, PPC_VECTOR_SYSTEM_CALL, cia + 4u, 0);
+ }
+diff --git a/GXRuntime/src/core/native_sdk.c b/GXRuntime/src/core/native_sdk.c
+new file mode 100644
+index 0000000000..a5cfbb005a
+--- /dev/null
++++ b/GXRuntime/src/core/native_sdk.c
+@@ -0,0 +1,433 @@
++// Native replacements for recompiled guest library functions.
++//
++// Selected by DOLRECOMP_NATIVE_SUBST at codegen time: the emitter guards the
++// matched function's entry label with a call to one of these, so the
++// substitution costs nothing beyond the dispatch the guest already pays for the
++// call. Doing the same thing through a mod patch was measured 34% *slower*,
++// because a mod patch round-trips the dispatcher and copies the whole CPU state
++// in and out on every call.
++//
++// CONTRACT. Each routine returns 1 if it fully performed the guest function,
++// having set the return value where the ABI puts it and set pc to lr; or 0 to
++// decline, having touched nothing, in which case the emitter falls through to
++// the translated guest code.
++//
++// Declining is the important half. The first version of memcpy/memset here
++// bounds-checked the guest pointers and, when the range was not wholly inside
++// main RAM, silently did nothing and returned as though it had copied - so any
++// buffer staged through the L1 locked cache at 0xE0000000 (which this game uses
++// for its graphics state) came out as garbage, and field dialogue boxes
++// rendered as white slivers. A substitution that cannot handle its inputs must
++// hand them back, never swallow them.
++//
++// Guest floats are big-endian, so every load and store swaps. The arithmetic
++// mirrors the guest's operation order and rounding exactly: these routines are
++// hand-written paired-single assembly whose ps_madds steps are *fused*
++// multiply-adds, and the module compiles with -ffp-contract=off so the fusing
++// must be explicit. Bit-exactness is not cosmetic - the lockstep verifier
++// compares recompiled execution against the interpreter, and netplay assumes
++// both sides agree.
++
++#include "gxruntime/gx_recomp.h"
++
++#include <math.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#if defined(_MSC_VER)
++#define DOLRECOMP_BSWAP32(x) _byteswap_ulong(x)
++#else
++#define DOLRECOMP_BSWAP32(x) __builtin_bswap32(x)
++#endif
++
++// Debug switches, read once:
++//   DOLRECOMP_NATIVE_SUBST_OFF    every substitution declines, so the module
++//                                 runs entirely on translated guest code. Same
++//                                 binary, so a rendering or timing difference
++//                                 can be bisected without a rebuild.
++//   DOLRECOMP_NATIVE_SUBST_TRACE  report each routine's handled/declined counts
++//                                 at exit. A routine that declines constantly
++//                                 is not earning its place; one that declines
++//                                 occasionally is exactly the case that used to
++//                                 corrupt memory silently.
++enum {
++  DOLRECOMP_SUBST_MEMCPY,
++  DOLRECOMP_SUBST_MEMSET,
++  DOLRECOMP_SUBST_MTX_SCALED_ADD,
++  DOLRECOMP_SUBST_MTX_CONCAT,
++  DOLRECOMP_SUBST_MTX_COPY,
++  DOLRECOMP_SUBST_MTX_IDENTITY,
++  DOLRECOMP_SUBST_MTX_MULT_VEC,
++  DOLRECOMP_SUBST_DCFLUSHRANGE,
++  DOLRECOMP_SUBST_COUNT
++};
++
++static const char *const dolrecomp_subst_names[DOLRECOMP_SUBST_COUNT] = {
++    "memcpy", "memset", "HSD_MtxScaledAdd", "PSMTXConcat",
++    "PSMTXCopy", "PSMTXIdentity", "PSMTXMultVec"};
++
++static unsigned long long dolrecomp_subst_handled[DOLRECOMP_SUBST_COUNT];
++static unsigned long long dolrecomp_subst_declined[DOLRECOMP_SUBST_COUNT];
++static int dolrecomp_subst_state = -1;  // -1 unread, 0 off, 1 on, 2 on+trace
++
++// Declines are bucketed by the top byte of the offending guest address, so a
++// routine that declines a lot says *where* its pointers live rather than just
++// how often it gave up. 0x80/0xC0 mean main RAM (a size overrun, since the
++// window itself is accepted), 0xE0 the L1 locked cache, 0x00 a null.
++static unsigned long long dolrecomp_subst_decline_dst[DOLRECOMP_SUBST_COUNT][256];
++static unsigned long long dolrecomp_subst_decline_src[DOLRECOMP_SUBST_COUNT][256];
++
++static void dolrecomp_subst_report_buckets(const char *label, int which,
++                                           unsigned long long (*table)[256]) {
++  for (int b = 0; b < 256; b++) {
++    if (table[which][b])
++      fprintf(stderr, "[subst]     %s %02x......  %llu\n", label, b, table[which][b]);
++  }
++}
++
++static void dolrecomp_subst_report(void) {
++  fprintf(stderr, "[subst] native substitution counts (handled / declined)\n");
++  for (int i = 0; i < DOLRECOMP_SUBST_COUNT; i++) {
++    if (dolrecomp_subst_handled[i] || dolrecomp_subst_declined[i]) {
++      fprintf(stderr, "[subst]   %-18s %12llu / %llu\n", dolrecomp_subst_names[i],
++              dolrecomp_subst_handled[i], dolrecomp_subst_declined[i]);
++      dolrecomp_subst_report_buckets("dst", i, dolrecomp_subst_decline_dst);
++      dolrecomp_subst_report_buckets("src", i, dolrecomp_subst_decline_src);
++    }
++  }
++  fflush(stderr);
++}
++
++static int dolrecomp_subst_init(void) {
++  if (getenv("DOLRECOMP_NATIVE_SUBST_OFF"))
++    return 0;
++  if (getenv("DOLRECOMP_NATIVE_SUBST_TRACE")) {
++    atexit(dolrecomp_subst_report);
++    return 2;
++  }
++  return 1;
++}
++
++static inline int dolrecomp_subst_enabled(void) {
++  if (dolrecomp_subst_state < 0)
++    dolrecomp_subst_state = dolrecomp_subst_init();
++  return dolrecomp_subst_state != 0;
++}
++
++static inline int dolrecomp_handled(int which) {
++  if (dolrecomp_subst_state == 2)
++    dolrecomp_subst_handled[which]++;
++  return 1;
++}
++
++static inline int dolrecomp_declined(int which) {
++  if (dolrecomp_subst_state == 2)
++    dolrecomp_subst_declined[which]++;
++  return 0;
++}
++
++// As above, but also records which of the two pointers was unusable and where
++// it pointed. dst_bad/src_bad are the results of the caller's own checks, so a
++// call declined for both reasons is counted in both buckets.
++static inline int dolrecomp_declined_at(int which, uint32_t dst_addr, int dst_bad,
++                                        uint32_t src_addr, int src_bad) {
++  if (dolrecomp_subst_state == 2) {
++    dolrecomp_subst_declined[which]++;
++    if (dst_bad)
++      dolrecomp_subst_decline_dst[which][(dst_addr >> 24) & 0xFFu]++;
++    if (src_bad)
++      dolrecomp_subst_decline_src[which][(src_addr >> 24) & 0xFFu]++;
++  }
++  return 0;
++}
++
++// Main RAM is reachable through two windows: cached at 0x80000000 and uncached
++// at 0xC0000000, both mapping to the same bytes. Games use the uncached mirror
++// heavily for DMA and GX data, so accepting only the cached one is not a
++// conservative choice - it declined 73% of memcpy calls, which is most of the
++// win on the hottest non-matrix function. This mirrors resolve_addr in the CPU
++// runtime. Everything else - the L1 locked cache at 0xE0000000, ARAM, MMIO -
++// still declines and is left to the guest code.
++static uint8_t *dolrecomp_guest_bytes(CPUState *ctx, uint32_t address,
++                                      uint32_t bytes) {
++  if (!ctx->ram || bytes > ctx->ram_size)
++    return 0;
++  uint32_t offset;
++  if (address >= GC_RAM_BASE && address - GC_RAM_BASE < ctx->ram_size)
++    offset = address - GC_RAM_BASE;
++  else if (address >= GC_RAM_UNCACHED && address - GC_RAM_UNCACHED < ctx->ram_size)
++    offset = address - GC_RAM_UNCACHED;
++  else
++    return 0;
++  if (offset > ctx->ram_size - bytes)
++    return 0;
++  return ctx->ram + offset;
++}
++
++// Anything outside the two RAM windows is asked of the host rather than guessed
++// at. Instrumenting the declines showed every single one was the L1 locked
++// cache at 0xE0000000 - 2.0M of 2.8M memcpy calls, because the graphics state
++// this game stages there is copied in and out constantly. The host's
++// external_pointer hook already hands out a real pointer for exactly that range
++// and returns null for everything else (MMIO, unmapped, anything needing live
++// MMU state to resolve), so deferring to it widens the substitution to the case
++// that matters without inventing a second opinion about which addresses are
++// safe. Null still means decline, and decline still means the guest code runs.
++static uint8_t *dolrecomp_guest_bytes_ext(CPUState *ctx, uint32_t address,
++                                          uint32_t bytes) {
++  uint8_t *direct = dolrecomp_guest_bytes(ctx, address, bytes);
++  if (direct || bytes == 0 || !ctx->external_pointer)
++    return direct;
++  return (uint8_t *)ctx->external_pointer(ctx, address, bytes);
++}
++
++static inline float *dolrecomp_guest_floats(CPUState *ctx, uint32_t address,
++                                            uint32_t count) {
++  return (float *)(void *)dolrecomp_guest_bytes(ctx, address,
++                                                count * (uint32_t)sizeof(float));
++}
++
++static inline float dolrecomp_load_be(const float *p) {
++  uint32_t bits;
++  memcpy(&bits, p, sizeof(bits));
++  bits = DOLRECOMP_BSWAP32(bits);
++  float value;
++  memcpy(&value, &bits, sizeof(value));
++  return value;
++}
++
++static inline void dolrecomp_store_be(float *p, float value) {
++  uint32_t bits;
++  memcpy(&bits, &value, sizeof(bits));
++  bits = DOLRECOMP_BSWAP32(bits);
++  memcpy(p, &bits, sizeof(bits));
++}
++
++// void* memcpy(void* dst, const void* src, u32 count)
++//
++// The guest's memcpy copies forward when src >= dst and backward otherwise,
++// which is memmove's contract, not memcpy's; substituting host memcpy would be
++// undefined on the overlapping ranges the game relies on. Returns dst in r3.
++int dolrecomp_native_memcpy(CPUState *ctx) {
++  if (!dolrecomp_subst_enabled())
++    return 0;
++  const uint32_t dst_addr = (uint32_t)ctx->gpr[3];
++  const uint32_t src_addr = (uint32_t)ctx->gpr[4];
++  const uint32_t count = (uint32_t)ctx->gpr[5];
++  uint8_t *dst = dolrecomp_guest_bytes_ext(ctx, dst_addr, count);
++  const uint8_t *src = dolrecomp_guest_bytes_ext(ctx, src_addr, count);
++  if (count && (!dst || !src))
++    return dolrecomp_declined_at(DOLRECOMP_SUBST_MEMCPY, dst_addr, !dst, src_addr,
++                                 !src);
++  if (count)
++    memmove(dst, src, count);
++  ctx->gpr[3] = dst_addr;
++  ctx->pc = ctx->lr;
++  return dolrecomp_handled(DOLRECOMP_SUBST_MEMCPY);
++}
++
++// void* memset(void* dest, int val, u32 count)
++int dolrecomp_native_memset(CPUState *ctx) {
++  if (!dolrecomp_subst_enabled())
++    return 0;
++  const uint32_t dest_addr = (uint32_t)ctx->gpr[3];
++  const uint32_t count = (uint32_t)ctx->gpr[5];
++  uint8_t *dest = dolrecomp_guest_bytes_ext(ctx, dest_addr, count);
++  if (count && !dest)
++    return dolrecomp_declined(DOLRECOMP_SUBST_MEMSET);
++  if (count)
++    memset(dest, (int)(uint8_t)ctx->gpr[4], count);
++  ctx->gpr[3] = dest_addr;
++  ctx->pc = ctx->lr;
++  return dolrecomp_handled(DOLRECOMP_SUBST_MEMSET);
++}
++
++
++// void DCFlushRange(void* addr, u32 nBytes)
++//
++// The guest routine is a dcbf loop over 32-byte lines followed by an `sc`. Each
++// dcbf reaches the host, and the host does per-line work there (a JIT icache
++// invalidation plus a binary search over chunk ranges), so a range flush over a
++// large buffer costs thousands of host round trips. PC sampling put this routine
++// at roughly half of all guest CPU time in a battle scene.
++//
++// This flushes every line BUT THE LAST in one range call, then rewrites r3/r4 so
++// the guest runs its own loop for exactly that final line. It deliberately
++// returns 0, which resumes the translated guest code from the top of the
++// routine: the trailing `sc` and the return then execute exactly as they would
++// have. That matters because `sc` raises a system call the OS handler sees, and
++// setting pc = lr the way a fully-handled substitution does would skip it.
++// Re-flushing the final line is idempotent, so the visible result is unchanged.
++int dolrecomp_native_dcflushrange(CPUState *ctx) {
++  if (!dolrecomp_subst_enabled())
++    return 0;
++  const uint32_t addr = (uint32_t)ctx->gpr[3];
++  const uint32_t bytes = (uint32_t)ctx->gpr[4];
++  // The guest checks nBytes <= 0 first and returns without the `sc`; leave that
++  // path alone rather than reproducing it.
++  if ((int32_t)bytes <= 0)
++    return dolrecomp_declined(DOLRECOMP_SUBST_DCFLUSHRANGE);
++
++  const uint32_t start = addr & ~31u;
++  const uint32_t lines = (bytes + (addr & 31u) + 31u) >> 5;
++
++  // Below a threshold this substitution is a PESSIMISATION, which cold-boot
++  // timing caught and the steady-state scenes hid: the fixed cost here is the
++  // entry guard plus one host round trip for the range, and the guest still
++  // flushes the final line, so for a two or three line flush that is more work
++  // than simply letting the guest loop do it. Boot is dominated by small,
++  // frequent flushes and measured 9.6% SLOWER before this check; the battle and
++  // field scenes issue larger ones and gained 7-19%.
++  // DOLRECOMP_DCF_MIN_LINES tunes it. 8 was chosen by sweeping the value on one
++  // build (it is read at runtime, so no rebuild is needed to change it):
++  //
++  //                  none      4        8       16
++  //   postbattle    +19.1%    --     +16.0%   +15.3%
++  //   battle-mid     +8.2%    --     +11.4%    +8.0%
++  //   field-phenac   +7.2%   +4.2%    +4.3%    +0.9%
++  //   cold boot      -9.6%    --      -1.5%    -2.8%   (negative = slower)
++  //
++  // 16 throws away field-phenac, whose flushes are mostly under that size.
++  static int min_lines = -1;
++  if (min_lines < 0) {
++    const char *setting = getenv("DOLRECOMP_DCF_MIN_LINES");
++    min_lines = (setting && *setting) ? atoi(setting) : 8;
++    if (min_lines < 2)
++      min_lines = 2;
++  }
++  if (lines < (uint32_t)min_lines)
++    return dolrecomp_declined(DOLRECOMP_SUBST_DCFLUSHRANGE);
++
++  ppc_cache_range(ctx, PPC_CACHE_DCBF, start, (lines - 1u) * 32u);
++  ctx->gpr[3] = start + (lines - 1u) * 32u;
++  ctx->gpr[4] = 32u;
++  dolrecomp_handled(DOLRECOMP_SUBST_DCFLUSHRANGE);
++  return 0;
++}
++
++// void HSD_MtxScaledAdd(f32* src, f32 scale, f32* add, f32* dst)
++//
++// dst[i] = scale * src[i] + add[i] over 12 floats. The decomp compiles this
++// under "#pragma fp_contract on", so each term is one fused multiply-add.
++// scale arrives in f1 per the EABI, not in a GPR.
++int dolrecomp_native_hsd_mtx_scaled_add(CPUState *ctx) {
++  if (!dolrecomp_subst_enabled())
++    return 0;
++  const float *src = dolrecomp_guest_floats(ctx, (uint32_t)ctx->gpr[3], 12u);
++  const float *add = dolrecomp_guest_floats(ctx, (uint32_t)ctx->gpr[4], 12u);
++  float *dst = dolrecomp_guest_floats(ctx, (uint32_t)ctx->gpr[5], 12u);
++  if (!src || !add || !dst)
++    return dolrecomp_declined(DOLRECOMP_SUBST_MTX_SCALED_ADD);
++
++  const float scale = (float)ctx->fpr[1];
++  float out[12];
++  for (int i = 0; i < 12; i++)
++    out[i] = fmaf(scale, dolrecomp_load_be(src + i), dolrecomp_load_be(add + i));
++  for (int i = 0; i < 12; i++)
++    dolrecomp_store_be(dst + i, out[i]);
++
++  ctx->pc = ctx->lr;
++  return dolrecomp_handled(DOLRECOMP_SUBST_MTX_SCALED_ADD);
++}
++
++// void PSMTXConcat(const Mtx a, const Mtx b, Mtx ab)
++// ab = a * b, 3x4 row-major. ab may alias a or b, so nothing is stored until
++// the whole result is computed.
++int dolrecomp_native_psmtx_concat(CPUState *ctx) {
++  if (!dolrecomp_subst_enabled())
++    return 0;
++  const float *a = dolrecomp_guest_floats(ctx, (uint32_t)ctx->gpr[3], 12u);
++  const float *b = dolrecomp_guest_floats(ctx, (uint32_t)ctx->gpr[4], 12u);
++  float *ab = dolrecomp_guest_floats(ctx, (uint32_t)ctx->gpr[5], 12u);
++  if (!a || !b || !ab)
++    return dolrecomp_declined(DOLRECOMP_SUBST_MTX_CONCAT);
++
++  float av[12], bv[12], out[12];
++  for (int i = 0; i < 12; i++) {
++    av[i] = dolrecomp_load_be(a + i);
++    bv[i] = dolrecomp_load_be(b + i);
++  }
++  for (int row = 0; row < 3; row++) {
++    const float r0 = av[row * 4 + 0];
++    const float r1 = av[row * 4 + 1];
++    const float r2 = av[row * 4 + 2];
++    const float r3 = av[row * 4 + 3];
++    out[row * 4 + 0] = fmaf(r2, bv[8], fmaf(r1, bv[4], r0 * bv[0]));
++    out[row * 4 + 1] = fmaf(r2, bv[9], fmaf(r1, bv[5], r0 * bv[1]));
++    out[row * 4 + 2] = fmaf(r2, bv[10], fmaf(r1, bv[6], r0 * bv[2]));
++    // The last step is ps_madds1 against the constant pair (0.0, 1.0) at
++    // lbl_804789B0: a fused multiply-add by exactly 1.0, i.e. an exact add.
++    out[row * 4 + 3] = fmaf(r2, bv[11], fmaf(r1, bv[7], r0 * bv[3])) + r3;
++  }
++  for (int i = 0; i < 12; i++)
++    dolrecomp_store_be(ab + i, out[i]);
++
++  ctx->pc = ctx->lr;
++  return dolrecomp_handled(DOLRECOMP_SUBST_MTX_CONCAT);
++}
++
++// void PSMTXCopy(const Mtx src, Mtx dst)
++int dolrecomp_native_psmtx_copy(CPUState *ctx) {
++  if (!dolrecomp_subst_enabled())
++    return 0;
++  const uint8_t *src = dolrecomp_guest_bytes(ctx, (uint32_t)ctx->gpr[3], 48u);
++  uint8_t *dst = dolrecomp_guest_bytes(ctx, (uint32_t)ctx->gpr[4], 48u);
++  if (!src || !dst)
++    return dolrecomp_declined(DOLRECOMP_SUBST_MTX_COPY);
++  if (src != dst)
++    memcpy(dst, src, 48u);  // raw bytes: endianness is irrelevant to a copy
++  ctx->pc = ctx->lr;
++  return dolrecomp_handled(DOLRECOMP_SUBST_MTX_COPY);
++}
++
++// void PSMTXIdentity(Mtx m)
++int dolrecomp_native_psmtx_identity(CPUState *ctx) {
++  if (!dolrecomp_subst_enabled())
++    return 0;
++  float *m = dolrecomp_guest_floats(ctx, (uint32_t)ctx->gpr[3], 12u);
++  if (!m)
++    return dolrecomp_declined(DOLRECOMP_SUBST_MTX_IDENTITY);
++  for (int i = 0; i < 12; i++)
++    dolrecomp_store_be(m + i, 0.0f);
++  dolrecomp_store_be(m + 0, 1.0f);
++  dolrecomp_store_be(m + 5, 1.0f);
++  dolrecomp_store_be(m + 10, 1.0f);
++  ctx->pc = ctx->lr;
++  return dolrecomp_handled(DOLRECOMP_SUBST_MTX_IDENTITY);
++}
++
++// void PSMTXMultVec(const Mtx m, const Vec* src, Vec* dst)
++//
++// Follows the SDK's paired-single sequence, which is not a left-to-right dot
++// product: each row is two lanes (ps_mul then a fused ps_madd) joined by
++// ps_sum0, giving (m0*x + m2*z) + (m1*y + m3). Float addition is not
++// associative, so the grouping is part of the contract.
++int dolrecomp_native_psmtx_mult_vec(CPUState *ctx) {
++  if (!dolrecomp_subst_enabled())
++    return 0;
++  const float *m = dolrecomp_guest_floats(ctx, (uint32_t)ctx->gpr[3], 12u);
++  const float *src = dolrecomp_guest_floats(ctx, (uint32_t)ctx->gpr[4], 3u);
++  float *dst = dolrecomp_guest_floats(ctx, (uint32_t)ctx->gpr[5], 3u);
++  if (!m || !src || !dst)
++    return dolrecomp_declined(DOLRECOMP_SUBST_MTX_MULT_VEC);
++
++  const float x = dolrecomp_load_be(src + 0);
++  const float y = dolrecomp_load_be(src + 1);
++  const float z = dolrecomp_load_be(src + 2);
++  float mv[12];
++  for (int i = 0; i < 12; i++)
++    mv[i] = dolrecomp_load_be(m + i);
++
++  const float ox = fmaf(mv[2], z, mv[0] * x) + (mv[1] * y + mv[3]);
++  const float oy = fmaf(mv[6], z, mv[4] * x) + (mv[5] * y + mv[7]);
++  const float oz = fmaf(mv[10], z, mv[8] * x) + (mv[9] * y + mv[11]);
++
++  dolrecomp_store_be(dst + 0, ox);
++  dolrecomp_store_be(dst + 1, oy);
++  dolrecomp_store_be(dst + 2, oz);
++
++  ctx->pc = ctx->lr;
++  return dolrecomp_handled(DOLRECOMP_SUBST_MTX_MULT_VEC);
++}
+diff --git a/GXRuntime/src/dvd.c b/GXRuntime/src/dvd.c
+index a81707358e..ab292e1017 100644
+--- a/GXRuntime/src/dvd.c
++++ b/GXRuntime/src/dvd.c
+@@ -24,6 +24,14 @@ static u32   g_num_entries;  // total entries; equals root entry's "next" field
+ static const char* g_strings;  // string table, inside g_fst
+ static bool  g_ready;
+ 
++static int seek_to(FILE* file, u64 offset) {
++#if defined(_WIN32)
++    return _fseeki64(file, (__int64)offset, SEEK_SET);
++#else
++    return fseeko(file, (off_t)offset, SEEK_SET);
++#endif
++}
++
+ static u32 be32(const u8* p) {
+     return ((u32)p[0] << 24) | ((u32)p[1] << 16) | ((u32)p[2] << 8) | (u32)p[3];
+ }
+@@ -81,7 +89,7 @@ static bool load_from(const char* path) {
+         fclose(f);
+         return false;
+     }
+-    if (fseeko(f, (off_t)fst_off, SEEK_SET) != 0 ||
++    if (seek_to(f, fst_off) != 0 ||
+         fread(fst, 1, fst_size, f) != fst_size) {
+         free(fst);
+         fclose(f);
+@@ -221,7 +229,7 @@ void dvd_read_to_guest(CPUState* cpu, u32 guest_addr, u32 disc_off, u32 length)
+ 
+     if (dst) {
+         size_t got = 0;
+-        if (fseeko(g_iso, (off_t)disc_off, SEEK_SET) == 0)
++        if (seek_to(g_iso, disc_off) == 0)
+             got = fread(dst, 1, length, g_iso);
+         if (got < length)
+             memset(dst + got, 0, length - got);  // zero-fill past image end
+@@ -232,7 +240,7 @@ void dvd_read_to_guest(CPUState* cpu, u32 guest_addr, u32 disc_off, u32 length)
+     // external region (VM window, etc.) is honored. Not expected in practice.
+     for (u32 k = 0; k < length; k++) {
+         u8 b = 0;
+-        if (fseeko(g_iso, (off_t)(disc_off + k), SEEK_SET) == 0)
++        if (seek_to(g_iso, (u64)disc_off + k) == 0)
+             (void)(fread(&b, 1, 1, g_iso) == 1);
+         mem_write8(cpu, guest_addr + k, b);
+     }
+diff --git a/Source/Core/Core/Config/GraphicsSettings.cpp b/Source/Core/Core/Config/GraphicsSettings.cpp
+index fb7f6a872b..a512a7af7d 100644
+--- a/Source/Core/Core/Config/GraphicsSettings.cpp
++++ b/Source/Core/Core/Config/GraphicsSettings.cpp
+@@ -19,6 +19,14 @@ const Info<int> GFX_ADAPTER{{System::GFX, "Hardware", "Adapter"}, 0};
+ // Graphics.Settings
+ 
+ const Info<bool> GFX_WIDESCREEN_HACK{{System::GFX, "Settings", "wideScreenHack"}, false};
++const Info<bool> GFX_WIDESCREEN_HUD_SAFE_AREA{
++    {System::GFX, "Settings", "WidescreenHudSafeArea"}, false};
++const Info<float> GFX_WIDESCREEN_HUD_SAFE_AREA_SCALE{
++    {System::GFX, "Settings", "WidescreenHudSafeAreaScale"}, 1.0f};
++const Info<bool> GFX_WIDESCREEN_AUTHORED_MENU{
++    {System::GFX, "Settings", "WidescreenAuthoredMenu"}, false};
++const Info<bool> GFX_COLOSSEUM_NAMING_PRESENTATION{
++    {System::GFX, "Settings", "ColosseumNamingPresentation"}, false};
+ const Info<AspectMode> GFX_ASPECT_RATIO{{System::GFX, "Settings", "AspectRatio"}, AspectMode::Auto};
+ const Info<int> GFX_CUSTOM_ASPECT_RATIO_WIDTH{{System::GFX, "Settings", "CustomAspectRatioWidth"},
+                                               1};
+diff --git a/Source/Core/Core/Config/GraphicsSettings.h b/Source/Core/Core/Config/GraphicsSettings.h
+index 831e04422b..d06f59bc1e 100644
+--- a/Source/Core/Core/Config/GraphicsSettings.h
++++ b/Source/Core/Core/Config/GraphicsSettings.h
+@@ -31,6 +31,10 @@ extern const Info<int> GFX_ADAPTER;
+ // Graphics.Settings
+ 
+ extern const Info<bool> GFX_WIDESCREEN_HACK;
++extern const Info<bool> GFX_WIDESCREEN_HUD_SAFE_AREA;
++extern const Info<float> GFX_WIDESCREEN_HUD_SAFE_AREA_SCALE;
++extern const Info<bool> GFX_WIDESCREEN_AUTHORED_MENU;
++extern const Info<bool> GFX_COLOSSEUM_NAMING_PRESENTATION;
+ extern const Info<AspectMode> GFX_ASPECT_RATIO;
+ extern const Info<int> GFX_CUSTOM_ASPECT_RATIO_WIDTH;
+ extern const Info<int> GFX_CUSTOM_ASPECT_RATIO_HEIGHT;
+diff --git a/Source/Core/Core/Config/StaticRecompSettings.cpp b/Source/Core/Core/Config/StaticRecompSettings.cpp
+index 653deacf58..8f7dbed371 100644
+--- a/Source/Core/Core/Config/StaticRecompSettings.cpp
++++ b/Source/Core/Core/Config/StaticRecompSettings.cpp
+@@ -6,6 +6,14 @@ namespace Config
+ {
+ const Info<bool> MAIN_STATICRECOMP_MODULE{{System::Main, "Core", "StaticRecompModule"}, true};
+ const Info<u32> MAIN_STATICRECOMP_IDLE_PC{{System::Main, "Core", "StaticRecompIdlePC"}, 0};
++const Info<u32> MAIN_STATICRECOMP_IDLE_LOOP_END_PC{
++    {System::Main, "Core", "StaticRecompIdleLoopEndPC"}, 0};
+ const Info<std::string> MAIN_STATICRECOMP_FALLBACK_RANGES{
+     {System::Main, "Core", "StaticRecompFallbackRanges"}, ""};
++const Info<u32> MAIN_STATICRECOMP_TASK_IDLE_PC{
++    {System::Main, "Core", "StaticRecompTaskIdlePC"}, 0};
++const Info<u32> MAIN_STATICRECOMP_TASK_LIST_HEAD{
++    {System::Main, "Core", "StaticRecompTaskListHead"}, 0};
++const Info<u32> MAIN_STATICRECOMP_TASK_PENDING_HEAD{
++    {System::Main, "Core", "StaticRecompTaskPendingHead"}, 0};
+ }  // namespace Config
+diff --git a/Source/Core/Core/Config/StaticRecompSettings.h b/Source/Core/Core/Config/StaticRecompSettings.h
+index fbfccca111..7e97216ba9 100644
+--- a/Source/Core/Core/Config/StaticRecompSettings.h
++++ b/Source/Core/Core/Config/StaticRecompSettings.h
+@@ -7,5 +7,15 @@ namespace Config
+ {
+ extern const Info<bool> MAIN_STATICRECOMP_MODULE;
+ extern const Info<u32> MAIN_STATICRECOMP_IDLE_PC;
++extern const Info<u32> MAIN_STATICRECOMP_IDLE_LOOP_END_PC;
+ extern const Info<std::string> MAIN_STATICRECOMP_FALLBACK_RANGES;
++
++// Second, task-list-aware idle trigger. MAIN_STATICRECOMP_IDLE_PC only fires
++// when the dispatcher regains control with pc == idle_pc, which a loop whose
++// back edge is an intra-chunk branch never does. These name a PC the dispatcher
++// *does* see -- the instruction after the loop's last bl -- plus the two guest
++// list heads whose contents decide whether the coming iteration has any work.
++extern const Info<u32> MAIN_STATICRECOMP_TASK_IDLE_PC;
++extern const Info<u32> MAIN_STATICRECOMP_TASK_LIST_HEAD;
++extern const Info<u32> MAIN_STATICRECOMP_TASK_PENDING_HEAD;
+ }  // namespace Config
+diff --git a/Source/Core/Core/IOS/FS/HostBackend/FS.cpp b/Source/Core/Core/IOS/FS/HostBackend/FS.cpp
+index 4ef859f29e..baff8c247d 100644
+--- a/Source/Core/Core/IOS/FS/HostBackend/FS.cpp
++++ b/Source/Core/Core/IOS/FS/HostBackend/FS.cpp
+@@ -227,7 +227,7 @@ void HostFileSystem::SaveFst()
+       return;
+     }
+   }
+-  if (!File::Rename(temp_path, dest_path))
++  if (!File::MoveWithOverwrite(temp_path, dest_path))
+     PanicAlertFmt("IOS_FS: Failed to rename temporary FST file");
+ }
+ 
+diff --git a/Source/Core/Core/PowerPC/Interpreter/Interpreter.cpp b/Source/Core/Core/PowerPC/Interpreter/Interpreter.cpp
+index 2fa8cde1dc..325d5f411b 100644
+--- a/Source/Core/Core/PowerPC/Interpreter/Interpreter.cpp
++++ b/Source/Core/Core/PowerPC/Interpreter/Interpreter.cpp
+@@ -289,6 +289,13 @@ void Interpreter::unknown_instruction(Interpreter& interpreter, UGeckoInstructio
+ {
+   ASSERT(Core::IsCPUThread());
+   auto& ppc_state = interpreter.m_ppc_state;
++  if (inst.hex == 0 && g_static_recomp_core &&
++      g_static_recomp_core->TryRecoverZeroCallback(ppc_state))
++  {
++    interpreter.m_end_block = true;
++    return;
++  }
++
+   auto& system = interpreter.m_system;
+   Core::CPUThreadGuard guard(system);
+ 
+diff --git a/Source/Core/Core/PowerPC/JitCommon/JitBase.h b/Source/Core/Core/PowerPC/JitCommon/JitBase.h
+index 066fe40a0d..5dcc517436 100644
+--- a/Source/Core/Core/PowerPC/JitCommon/JitBase.h
++++ b/Source/Core/Core/PowerPC/JitCommon/JitBase.h
+@@ -237,6 +237,19 @@ public:
+ 
+   virtual const CommonAsmRoutinesBase* GetAsmRoutines() = 0;
+ 
++  // Whether this core can fold the gather-pipe / quantize check inline when a
++  // block is recompiled. A core that cannot gains nothing from the exception
++  // registration and would pay for it on every gather-pipe store, forever.
++  virtual bool UsesCompiledExceptionChecks() const { return true; }
++
++  // The core that actually compiles the block the hook fired from, and so the
++  // one whose fifoWriteAddresses set and block cache the registration belongs
++  // in. Normally that is this core. A core that executes prebuilt code but
++  // keeps a JIT for whatever the module does not cover must point at that JIT
++  // instead: the fallback compiles the block, reads the set at compile time,
++  // and is the only thing that can retire the call site by recompiling.
++  virtual JitBase* GetExceptionCheckTarget() { return this; }
++
+   virtual bool WantsPageTableMappings() const;
+ 
+   virtual bool HandleFault(uintptr_t access_address, SContext* ctx) = 0;
+diff --git a/Source/Core/Core/PowerPC/JitInterface.cpp b/Source/Core/Core/PowerPC/JitInterface.cpp
+index e7385fce17..c2a3a30c3c 100644
+--- a/Source/Core/Core/PowerPC/JitInterface.cpp
++++ b/Source/Core/Core/PowerPC/JitInterface.cpp
+@@ -322,18 +322,29 @@ void JitInterface::CompileExceptionCheck(ExceptionType type)
+   if (!m_jit)
+     return;
+ 
++  // Register against the core that actually compiled the block this fired
++  // from. With static recompilation that is the fallback JIT, not the static
++  // core: the fallback reads these sets at compile time and is what retires
++  // the call site by recompiling with the check folded inline.
++  JitBase* const target = m_jit->GetExceptionCheckTarget();
++
++  // Cores that cannot fold the check inline gain nothing here and would
++  // otherwise pay for this on every gather-pipe store, forever.
++  if (!target->UsesCompiledExceptionChecks())
++    return;
++
+   std::unordered_set<u32>* exception_addresses = nullptr;
+ 
+   switch (type)
+   {
+   case ExceptionType::FIFOWrite:
+-    exception_addresses = &m_jit->js.fifoWriteAddresses;
++    exception_addresses = &target->js.fifoWriteAddresses;
+     break;
+   case ExceptionType::PairedQuantize:
+-    exception_addresses = &m_jit->js.pairedQuantizeAddresses;
++    exception_addresses = &target->js.pairedQuantizeAddresses;
+     break;
+   case ExceptionType::SpeculativeConstants:
+-    exception_addresses = &m_jit->js.noSpeculativeConstantsAddresses;
++    exception_addresses = &target->js.noSpeculativeConstantsAddresses;
+     break;
+   }
+ 
+@@ -355,8 +366,10 @@ void JitInterface::CompileExceptionCheck(ExceptionType type)
+     exception_addresses->insert(ppc_state.pc);
+ 
+     // Invalidate the JIT block so that it gets recompiled with the external exception check
+-    // included.
+-    m_jit->GetBlockCache()->InvalidateICache(ppc_state.pc, 4, true);
++    // included. Same reasoning as the set above: it has to be the compiling
++    // core's block cache, or the block is never rebuilt and the hook never
++    // stops firing.
++    target->GetBlockCache()->InvalidateICache(ppc_state.pc, 4, true);
+   }
+ }
+ 
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
+index e3581cc938..c6a189d122 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
+@@ -3,6 +3,11 @@
+ 
+ #include "Core/PowerPC/StaticRecomp/StaticRecompCore.h"
+ 
++#include <atomic>
++#include <chrono>
++#include <map>
++#include <thread>
++
+ #include <algorithm>
+ #include <cstdio>
+ #include <cstdlib>
+@@ -16,6 +21,7 @@
+ #include "Core/Config/MainSettings.h"
+ #include "Core/Config/StaticRecompSettings.h"
+ #include "Core/Config/ConfigManager.h"
++#include "Core/PowerPC/PowerPC.h"
+ #include "Core/PowerPC/StaticRecomp/StaticRecompLockstep.h"
+ #include "Core/System.h"
+ 
+@@ -136,6 +142,27 @@ bool StaticRecompCore::ShouldYieldAt(u32 address)
+   return IsHostCallAddress(address);
+ }
+ 
++bool StaticRecompCore::TryRecoverZeroCallback(PowerPC::PowerPCState& ppc)
++{
++  if (!m_module_active || ChunkIndexOf(ppc.pc) >= 0)
++    return false;
++
++  const u32 return_address = LR(ppc) & ~3u;
++  const int return_chunk = ChunkIndexOf(return_address);
++  if (return_chunk < 0)
++    return false;
++
++  ++m_recovered_zero_callbacks;
++  std::fprintf(stderr,
++               "[staticrecomp] recovered zeroed dynamic callback pc=0x%08x lr=0x%08x "
++               "return_chunk=%d ctr=0x%08x r31=0x%08x\n",
++               ppc.pc, return_address, return_chunk, ppc.spr[SPR_CTR], ppc.gpr[31]);
++  std::fflush(stderr);
++  ppc.pc = return_address;
++  ppc.npc = return_address + 4u;
++  return true;
++}
++
+ StaticRecompCore::StaticRecompCore(Core::System& system, StaticRecompModuleSource module_source)
+     : JitBase(system), m_module_source(std::move(module_source))
+ {
+@@ -148,6 +175,46 @@ void StaticRecompCore::Init()
+   g_static_recomp_core = this;
+   RefreshConfig();
+   m_collect_dispatch_samples = std::getenv("STATICRECOMP_DISPATCH_SAMPLES") != nullptr;
++  // STATICRECOMP_PC_SAMPLES samples the guest PC from a separate thread and
++  // prints the hottest addresses every couple of seconds. The dispatch-site
++  // sampler cannot see a guest that never returns to the dispatcher, and when
++  // that happens the CPU thread also cannot be joined, so nothing is printed at
++  // shutdown either. This reports as it goes, which is the only way to locate a
++  // spin inside a single generated chunk.
++  if (std::getenv("STATICRECOMP_PC_SAMPLES"))
++  {
++    m_pc_sampling.store(true, std::memory_order_relaxed);
++    std::thread([this] {
++      std::map<u32, u64> hits;
++      int since_report = 0;
++      // The value is the sample interval in milliseconds. Each report covers
++      // only the window since the last one: accumulating from process start
++      // folds boot into every report and makes a steady-state scene profile
++      // impossible to read.
++      const char* setting = std::getenv("STATICRECOMP_PC_SAMPLES");
++      int interval_ms = setting ? std::atoi(setting) : 0;
++      if (interval_ms <= 0)
++        interval_ms = 5;
++      const int per_report = std::max(1, 2000 / interval_ms);
++      while (m_pc_sampling.load(std::memory_order_relaxed))
++      {
++        ++hits[m_guest.pc];
++        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
++        if (++since_report < per_report)
++          continue;
++        since_report = 0;
++        std::vector<std::pair<u32, u64>> top(hits.begin(), hits.end());
++        std::sort(top.begin(), top.end(),
++                  [](const auto& l, const auto& r) { return l.second > r.second; });
++        for (std::size_t i = 0; i < std::min<std::size_t>(top.size(), 8); ++i)
++          std::fprintf(stderr, "[staticrecomp] pc-sample pc=%08x hits=%llu\n",
++                       top[i].first, (unsigned long long)top[i].second);
++        std::fprintf(stderr, "[staticrecomp] pc-sample --- distinct=%zu ---\n", hits.size());
++        hits.clear();
++        std::fflush(stderr);
++      }
++    }).detach();
++  }
+   const char* fallback_override = std::getenv("STATICRECOMP_FALLBACK_RANGES");
+   std::istringstream fallback_ranges(fallback_override ? fallback_override :
+                                                          Config::Get(Config::MAIN_STATICRECOMP_FALLBACK_RANGES));
+@@ -182,6 +249,19 @@ void StaticRecompCore::Init()
+ 
+   LoadModule();
+   m_idle_pc = Config::Get(Config::MAIN_STATICRECOMP_IDLE_PC);
++  m_idle_loop_end_pc = Config::Get(Config::MAIN_STATICRECOMP_IDLE_LOOP_END_PC);
++  m_task_idle_pc = Config::Get(Config::MAIN_STATICRECOMP_TASK_IDLE_PC);
++  m_task_list_head = Config::Get(Config::MAIN_STATICRECOMP_TASK_LIST_HEAD);
++  m_task_pending_head = Config::Get(Config::MAIN_STATICRECOMP_TASK_PENDING_HEAD);
++  std::fprintf(stderr, "[staticrecomp] task idle: pc=0x%08x list=0x%08x pending=0x%08x\n",
++               m_task_idle_pc, m_task_list_head, m_task_pending_head);
++  std::fflush(stderr);
++  if (m_idle_pc != 0)
++  {
++    std::fprintf(stderr, "[staticrecomp] idle loop: [0x%08x,0x%08x)\n", m_idle_pc,
++                 m_idle_loop_end_pc);
++    std::fflush(stderr);
++  }
+   m_lockstep_verifier = std::make_unique<StaticRecompLockstep::StaticRecompLockstepVerifier>(*this);
+   m_lockstep_verifier->Init();
+ 
+@@ -203,12 +283,30 @@ void StaticRecompCore::Shutdown()
+   g_static_recomp_core = nullptr;
+   std::fprintf(stderr,
+                "[staticrecomp] shutdown: native=%llu fallback=%llu native_exc=%llu hook_fb=%llu "
+-               "smc_failed=%u verifications=%llu reverify_events=%llu bursts=%llu cycles=%llu\n",
++               "zero_cb=%llu smc_failed=%u verifications=%llu reverify_events=%llu bursts=%llu "
++               "cycles=%llu\n",
+                (unsigned long long)m_native_dispatches, (unsigned long long)m_fallback_steps,
+                (unsigned long long)m_native_exceptions,
+-               (unsigned long long)m_hook_fallback_instructions, m_failed_chunks,
++               (unsigned long long)m_hook_fallback_instructions,
++               (unsigned long long)m_recovered_zero_callbacks, m_failed_chunks,
+                (unsigned long long)m_verifications, (unsigned long long)m_reverify_events,
+                (unsigned long long)m_bursts, (unsigned long long)m_charged_cycles);
++  std::vector<std::pair<u32, u64>> host_call_sites(m_host_call_sites.begin(),
++                                                   m_host_call_sites.end());
++  std::sort(host_call_sites.begin(), host_call_sites.end(),
++            [](const auto& left, const auto& right) { return left.second > right.second; });
++  u64 host_call_total = 0;
++  for (const auto& entry : host_call_sites)
++    host_call_total += entry.second;
++  for (std::size_t i = 0; i < std::min<std::size_t>(host_call_sites.size(), 16); ++i)
++  {
++    std::fprintf(stderr, "[staticrecomp] host-call pc=%08x count=%llu (%.1f%% of %llu)\n",
++                 host_call_sites[i].first, (unsigned long long)host_call_sites[i].second,
++                 host_call_total ? 100.0 * static_cast<double>(host_call_sites[i].second) /
++                                       static_cast<double>(host_call_total)
++                                 : 0.0,
++                 (unsigned long long)host_call_total);
++  }
+   std::vector<std::pair<u32, u64>> dispatch_samples(m_dispatch_samples.begin(),
+                                                     m_dispatch_samples.end());
+   std::sort(dispatch_samples.begin(), dispatch_samples.end(),
+@@ -221,11 +319,11 @@ void StaticRecompCore::Shutdown()
+   }
+   NOTICE_LOG_FMT(POWERPC,
+                  "StaticRecomp: shutdown. native_dispatches={} fallback_steps={} "
+-                 "native_exceptions={} hook_fallback_instructions={} smc_failed_chunks={} "
+-                 "verifications={} reverify_events={}",
++                 "native_exceptions={} hook_fallback_instructions={} recovered_zero_callbacks={} "
++                 "smc_failed_chunks={} verifications={} reverify_events={}",
+                  m_native_dispatches, m_fallback_steps, m_native_exceptions,
+-                 m_hook_fallback_instructions, m_failed_chunks, m_verifications,
+-                 m_reverify_events);
++                 m_hook_fallback_instructions, m_recovered_zero_callbacks, m_failed_chunks,
++                 m_verifications, m_reverify_events);
+   m_lockstep_verifier.reset();
+   m_block_cache.Shutdown();
+   m_module = nullptr;
+@@ -307,6 +405,7 @@ void StaticRecompCore::LoadModule()
+   m_has_rel_modules = desc->num_rel_modules != 0;
+   m_chunk_state.assign(desc->num_chunk_ranges, CHUNK_UNVERIFIED);
+   m_chunk_host_call_state.assign(desc->num_chunk_ranges, 0);
++  m_native_region_blocked.clear();
+   m_effective_chunk_hashes.assign(desc->chunk_hashes,
+                                   desc->chunk_hashes + desc->num_chunk_ranges);
+   m_chunk_rel_sections.assign(desc->num_chunk_ranges, -1);
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
+index 44d027bef7..2daf9b4677 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
+@@ -3,6 +3,8 @@
+ 
+ #pragma once
+ 
++#include <atomic>
++
+ #include <string>
+ #include <unordered_map>
+ #include <unordered_set>
+@@ -55,12 +57,30 @@ public:
+   bool FastDispatchableAt(u32 address);
+   bool IsHostCallAddress(u32 address) const;
+   bool ShouldYieldAt(u32 address);
++  bool TryRecoverZeroCallback(PowerPC::PowerPCState& ppc);
+ 
+   void ClearCache() override;
+   void Jit(u32 em_address) override {}
+   bool HandleFault(uintptr_t access_address, SContext* ctx) override { return false; }
+ 
+   JitBaseBlockCache* GetBlockCache() override { return &m_block_cache; }
++  // The static core cannot fold the check into prebuilt module code, so
++  // registering against it is pure cost (measured 11.2M calls/s on Colosseum).
++  bool UsesCompiledExceptionChecks() const override { return false; }
++
++  // ...but the hook does not only fire from module code. Anything the module
++  // does not cover runs on m_fallback_jit, which is a real Jit64/JitArm64: it
++  // does read fifoWriteAddresses at compile time, and it is the only core that
++  // can retire the call site by recompiling the block with the check folded in.
++  // Answering "this" for those blocks suppressed the registration they depend
++  // on, so the gather-pipe check was never compiled in and the hook fired
++  // forever - which on aarch64 wedged Colosseum on a black screen with 62% of
++  // CPU inside a hook that is supposed to retire itself.
++  JitBase* GetExceptionCheckTarget() override
++  {
++    return m_fallback_jit ? m_fallback_jit.get() : this;
++  }
++
+   void EraseSingleBlock(const JitBlock& block) override {}
+   std::vector<MemoryStats> GetMemoryStats() const override { return {}; }
+   std::size_t DisassembleNearCode(const JitBlock& block, std::ostream& stream) const override
+@@ -114,6 +134,8 @@ private:
+   int ChunkIndexOf(u32 address);
+   bool IsForcedFallbackAddress(u32 address) const;
+   bool ChunkContainsHostCall(u32 index) const;
++  bool RegionNeedsInterception(u32 start, u32 end) const;
++  void HandleCacheRange(CPUState* cpu, u8 operation, u32 start, u32 bytes);
+   void VerifyChunk(u32 index);
+   bool ResolveNativeAddress(u32 runtime_address, u32* linked_address, u32* rel_section_index);
+   bool ResolveRuntimeAddress(u32 linked_address, u32* runtime_address) const;
+@@ -162,14 +184,29 @@ private:
+   u64 m_fallback_steps = 0;
+   u64 m_native_exceptions = 0;
+   u64 m_hook_fallback_instructions = 0;
++  u64 m_recovered_zero_callbacks = 0;
+   u64 m_timebase_cycle_remainder = 0;
++  u64 m_idle_hits = 0;
+   std::unordered_map<u32, u64> m_dispatch_samples;
++  // Which addresses are costing host-call round trips. Each one exits the
++  // module, copies the CPU state out and back, and re-enters, and profiling
++  // put that boundary at ~23% of frame time on aarch64 - more than the
++  // recompiled guest code itself. Knowing the hot addresses is what makes it
++  // actionable: a hot HLE entry point can be substituted inside the module
++  // instead, which removes the round trip entirely.
++  std::unordered_map<u32, u64> m_host_call_sites;
+   u64 m_bursts = 0;          // SyncIn..SyncOut native runs (diagnostic)
+   u64 m_charged_cycles = 0;  // cycles flushed from module charges (diagnostic)
+ 
+   // D4 guard state: parallel to m_module->chunk_ranges.
+   std::vector<u8> m_chunk_state;
+   mutable std::vector<u8> m_chunk_host_call_state;
++  // Answers to the LLVM backend's native-region interception query, keyed by
++  // the region's [start, end). Generated code asks once per function entry, so
++  // the scan behind it has to be paid once per region, not once per call.
++  // Cleared wherever m_chunk_host_call_state is, since it answers the same
++  // question over a different granularity.
++  mutable std::unordered_map<u64, bool> m_native_region_blocked;
+   std::vector<StaticRecompRange> m_forced_fallback_ranges;
+   struct ActiveRelSection
+   {
+@@ -199,8 +236,18 @@ private:
+   mutable u32 m_last_chunk_index = 0;
+ 
+   bool m_collect_dispatch_samples = false;
++  std::atomic<bool> m_pc_sampling{false};
+   bool m_has_rel_modules = false;
+   u32 m_idle_pc = 0;
++  u32 m_idle_loop_end_pc = 0;
++
++  // Task-list-aware idle. See TaskIdleIterationIsEmpty().
++  u32 m_task_idle_pc = 0;
++  u32 m_task_list_head = 0;
++  u32 m_task_pending_head = 0;
++  u64 m_task_idle_hits = 0;
++
++  bool TaskIdleIterationIsEmpty() const;
+ };
+ 
+ extern StaticRecompCore* g_static_recomp_core;
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
+index 7b3d845cee..2e425108e4 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
+@@ -13,6 +13,7 @@
+ #include "Common/Logging/Log.h"
+ 
+ #include <cstdio>
++#include <cstdlib>
+ 
+ namespace
+ {
+@@ -22,6 +23,39 @@ constexpr u32 LOCKED_CACHE_BASE = 0xE0000000u;
+ bool StaticRecompCore::HookHostCall(CPUState* cpu, u32 address)
+ {
+   auto* core = static_cast<StaticRecompCore*>(cpu->external_user_data);
++  // The LLVM backend's generated regions run without per-instruction host-call
++  // dispatch, so each one asks at entry whether the host has to intercept
++  // anything inside it. Acknowledging the query is what distinguishes "nothing
++  // to intercept here" from "this host does not implement the query": leaving
++  // external_rid alone makes the module take the safe path instead.
++  // A whole-range cache operation from a native substitution. Doing this line
++  // by line is what made DCFlushRange the single largest consumer of guest CPU
++  // time in a battle scene: JitInterface::InvalidateICacheLines folds a line
++  // count into one InvalidateICache, and its own comment describes exactly the
++  // dcbf loop this replaces.
++  if (address == PPC_HOST_CALL_CACHE_RANGE)
++  {
++    core->HandleCacheRange(cpu, cpu->external_rid, cpu->external_addr, cpu->external_value);
++    return false;
++  }
++
++  if (address == PPC_HOST_CALL_NATIVE_REGION_QUERY)
++  {
++    // STATICRECOMP_NATIVE_REGION=0 declines the query instead of answering it,
++    // which is exactly what a host without native-region support does: the
++    // module then takes the safe path at every region entry. Keeping the two
++    // behaviours on one binary is what makes "is the fast path at fault?" a
++    // one-variable question.
++    static const bool answer_query = [] {
++      const char* setting = std::getenv("STATICRECOMP_NATIVE_REGION");
++      return !setting || std::atoi(setting) != 0;
++    }();
++    if (!answer_query)
++      return true;
++    const bool blocked = core->RegionNeedsInterception(cpu->external_addr, cpu->external_value);
++    cpu->external_rid = PPC_NATIVE_REGION_QUERY_HANDLED;
++    return blocked;
++  }
+   return core->m_module_source.host_call &&
+          core->m_module_source.host_call(cpu, address, core->m_module_source.host_call_user);
+ }
+@@ -325,6 +359,55 @@ void StaticRecompCore::HookSPRWrite(CPUState* cpu, u16 spr, u32 value, u32 cia)
+     system.GetMMU().DBATUpdated();
+ }
+ 
++
++void StaticRecompCore::HandleCacheRange(CPUState* cpu, u8 operation, u32 start, u32 bytes)
++{
++  if (!bytes)
++    return;
++  start = TranslateRelAddress(start);
++  PropagateGuestMSR();
++  auto& ppc = m_system.GetPPCState();
++  const u32 count = (bytes + 31u) / 32u;
++
++  if (operation == PPC_CACHE_ICBI)
++  {
++    auto& memory = m_system.GetMemory();
++    auto& jit = m_system.GetJitInterface();
++    for (u32 i = 0; i < count; ++i)
++      ppc.iCache.Invalidate(memory, jit, start + i * 32u);
++    return;
++  }
++
++  if (!ppc.m_enable_dcache)
++  {
++    // The batched form. This is the whole point of the range hook.
++    m_system.GetJitInterface().InvalidateICacheLines(start, count);
++    return;
++  }
++
++  // With dcache emulation on there is no range form, so fall back to per line,
++  // which is still no worse than the guest loop would have been.
++  auto& mmu = m_system.GetMMU();
++  for (u32 i = 0; i < count; ++i)
++  {
++    const u32 ea = start + i * 32u;
++    switch (operation)
++    {
++    case PPC_CACHE_DCBST:
++      mmu.StoreDCacheLine(ea);
++      break;
++    case PPC_CACHE_DCBF:
++      mmu.FlushDCacheLine(ea);
++      break;
++    case PPC_CACHE_DCBI:
++      mmu.InvalidateDCacheLine(ea);
++      break;
++    default:
++      break;
++    }
++  }
++}
++
+ void StaticRecompCore::HookCacheControl(CPUState* cpu, u8 operation, u32 ea, u32 cia)
+ {
+   auto* core = static_cast<StaticRecompCore*>(cpu->external_user_data);
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
+index 71a21c5baa..238e3a52f4 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
+@@ -6,6 +6,7 @@
+ #include "Core/PowerPC/PowerPC.h"
+ #include "Core/PowerPC/Interpreter/Interpreter.h"
+ #include "Core/PowerPC/StaticRecomp/StaticRecompLockstep.h"
++#include "Common/Swap.h"
+ #include "Core/CoreTiming.h"
+ #include "Core/HW/CPU.h"
+ #include "Core/Config/MainSettings.h"
+@@ -18,6 +19,40 @@
+ 
+ namespace
+ {
++// Guest task node layout, read from the decomp (gappBackgroundCallback,
++// src/game/gs_gapp.c) and confirmed against the generated chunk: stride 0x18,
++// prev at 0x0, next at 0x4, state at 0x8, priority at 0xC, blocked at 0xD.
++constexpr u32 GAPP_TASK_NEXT = 0x4;
++constexpr u32 GAPP_TASK_STATE = 0x8;
++constexpr u32 GAPP_TASK_BLOCKED = 0xD;
++constexpr u32 GAPP_TASK_RUNNABLE_STATE = 2;
++
++// A walk of a corrupt or mid-update list must terminate. The guest list is
++// bounded by the task array, so anything longer than this is not a list.
++constexpr u32 GAPP_TASK_WALK_LIMIT = 256;
++
++bool GuestRead32(const u8* ram, u32 ram_size, u32 address, u32* out)
++{
++  if (address < 0x80000000u)
++    return false;
++  const u32 offset = address - 0x80000000u;
++  if (offset + sizeof(u32) > ram_size)
++    return false;
++  *out = Common::swap32(&ram[offset]);
++  return true;
++}
++
++bool GuestRead8(const u8* ram, u32 ram_size, u32 address, u8* out)
++{
++  if (address < 0x80000000u)
++    return false;
++  const u32 offset = address - 0x80000000u;
++  if (offset >= ram_size)
++    return false;
++  *out = ram[offset];
++  return true;
++}
++
+ constexpr u32 SYNC_EXCEPTION_MASK = ~static_cast<u32>(
+     EXCEPTION_EXTERNAL_INT | EXCEPTION_DECREMENTER | EXCEPTION_PERFORMANCE_MONITOR);
+ constexpr u32 ASYNC_EXCEPTION_MASK =
+@@ -44,13 +79,58 @@ FilePtr OpenDispatchTrace()
+   FilePtr file(std::fopen(path, "w"));
+   if (file)
+   {
+-    std::fprintf(file.get(), "dispatch,pc,lr,ctr,cr,timebase,ppc_downcount\n");
++    std::fprintf(file.get(),
++                 "event,dispatch,pc,lr,r0,r3,r13,r29,r30,timebase,ppc_downcount\n");
+     std::fflush(file.get());
+   }
+   return file;
+ }
+ }
+ 
++// True when the loop iteration about to start would do nothing at all.
++//
++// gappBackgroundCallback is the guest's OSSetIdleFunction body: a bare for(;;)
++// that walks the active task list, runs any runnable callback, then splices in
++// whatever the pending list accumulated. An iteration is a no-op exactly when
++// no active node is runnable AND the pending list is empty -- and since we are
++// called at the instruction after the loop's final bl, with the walk finished
++// and nothing else able to run in between, that is also the state the next
++// iteration starts from. Anything unreadable answers "not empty", so a bad read
++// costs performance rather than correctness.
++bool StaticRecompCore::TaskIdleIterationIsEmpty() const
++{
++  const u8* ram = m_guest.ram;
++  const u32 ram_size = m_guest.ram_size;
++  if (ram == nullptr || m_task_list_head == 0 || m_task_pending_head == 0)
++    return false;
++
++  u32 pending = 0;
++  if (!GuestRead32(ram, ram_size, m_task_pending_head, &pending) || pending != 0)
++    return false;
++
++  u32 node = 0;
++  if (!GuestRead32(ram, ram_size, m_task_list_head, &node))
++    return false;
++
++  for (u32 steps = 0; node != 0; ++steps)
++  {
++    if (steps >= GAPP_TASK_WALK_LIMIT)
++      return false;
++
++    u32 state = 0;
++    u8 blocked = 0;
++    if (!GuestRead32(ram, ram_size, node + GAPP_TASK_STATE, &state) ||
++        !GuestRead8(ram, ram_size, node + GAPP_TASK_BLOCKED, &blocked))
++      return false;
++    if (state == GAPP_TASK_RUNNABLE_STATE && blocked == 0)
++      return false;
++
++    if (!GuestRead32(ram, ram_size, node + GAPP_TASK_NEXT, &node))
++      return false;
++  }
++  return true;
++}
++
+ void StaticRecompCore::Run()
+ {
+   auto& core_timing = m_system.GetCoreTiming();
+@@ -114,11 +194,16 @@ void StaticRecompCore::Run()
+         ++m_bursts;
+         do
+         {
+-          if (dispatch_trace && (m_native_dispatches & 0xFFFFFu) == 0)
++          const bool trace_sample = (m_native_dispatches & 0xFFFFFu) == 0;
++          const bool trace_wait_entry = m_guest.pc == 0x800d3190u;
++          if (dispatch_trace && (trace_sample || trace_wait_entry))
+           {
+-            std::fprintf(dispatch_trace.get(), "%llu,%08x,%08x,%08x,%08x,%llu,%d\n",
++            std::fprintf(dispatch_trace.get(),
++                         "%s,%llu,%08x,%08x,%08x,%08x,%08x,%08x,%08x,%llu,%d\n",
++                         trace_wait_entry ? "wait-entry" : "sample",
+                          static_cast<unsigned long long>(m_native_dispatches), m_guest.pc,
+-                         m_guest.lr, m_guest.ctr, m_guest.cr,
++                         m_guest.lr, m_guest.gpr[0], m_guest.gpr[3], m_guest.gpr[13],
++                         m_guest.gpr[29], m_guest.gpr[30],
+                          static_cast<unsigned long long>(m_guest.timebase), ppc.downcount);
+             std::fflush(dispatch_trace.get());
+           }
+@@ -157,13 +242,48 @@ void StaticRecompCore::Run()
+           const u64 effective_charge = static_cast<u64>(charge > 0 ? charge : 1);
+           ppc.downcount -= static_cast<int>(effective_charge);
+           m_charged_cycles += effective_charge;
+-          const u64 total_cycles = m_timebase_cycle_remainder + effective_charge;
+-          m_guest.timebase += total_cycles / SystemTimers::TIMER_RATIO;
+-          m_timebase_cycle_remainder = total_cycles % SystemTimers::TIMER_RATIO;
++          AdvanceGuestTimebase(effective_charge);
++
++          // Yield only after execution has resumed inside the configured loop
++          // body and branched back to its start. Initial arrival at idle_pc
++          // still runs every callback pump once, while resume points after any
++          // nested callback can skip the completed wait iteration.
++          const bool completed_idle_loop =
++              m_idle_pc != 0 && m_idle_loop_end_pc > m_idle_pc &&
++              runtime_dispatch_address > m_idle_pc &&
++              runtime_dispatch_address < m_idle_loop_end_pc && m_guest.pc == m_idle_pc;
++          if (completed_idle_loop)
++          {
++            ++m_idle_hits;
++            if (dispatch_trace && (m_idle_hits & (m_idle_hits - 1)) == 0)
++            {
++              std::fprintf(dispatch_trace.get(),
++                           "idle,%llu,%08x,%08x,%08x,%08x,%08x,%08x,%08x,%llu,%d\n",
++                           static_cast<unsigned long long>(m_native_dispatches), m_guest.pc,
++                           m_guest.lr, m_guest.gpr[0], m_guest.gpr[3], m_guest.gpr[13],
++                           m_guest.gpr[29], m_guest.gpr[30],
++                           static_cast<unsigned long long>(m_guest.timebase), ppc.downcount);
++              std::fflush(dispatch_trace.get());
++            }
++            m_system.GetCoreTiming().Idle();
++          }
+ 
+-          // Idle loop skipping for configured target loops (e.g. Wii Menu OSIdleThread)
+-          if (m_guest.pc == m_idle_pc && m_idle_pc != 0)
++          // Second idle trigger, for a loop whose back edge never reaches the
++          // dispatcher. m_idle_pc cannot fire on gappBackgroundCallback: its
++          // back edge is an intra-chunk branch, so the dispatcher never regains
++          // control with pc == the loop top. What it does see every iteration
++          // is the return from the loop's final bl, which is what this matches.
++          if (m_task_idle_pc != 0 && runtime_dispatch_address == m_task_idle_pc &&
++              TaskIdleIterationIsEmpty())
+           {
++            ++m_task_idle_hits;
++            if (dispatch_trace && (m_task_idle_hits & (m_task_idle_hits - 1)) == 0)
++            {
++              std::fprintf(dispatch_trace.get(), "task-idle,%llu,%08x,%llu,%d\n",
++                           static_cast<unsigned long long>(m_native_dispatches), m_guest.pc,
++                           static_cast<unsigned long long>(m_task_idle_hits), ppc.downcount);
++              std::fflush(dispatch_trace.get());
++            }
+             m_system.GetCoreTiming().Idle();
+           }
+ 
+@@ -195,6 +315,7 @@ void StaticRecompCore::Run()
+       {
+         if (m_guest.host_call && IsHostCallAddress(ppc.pc))
+         {
++          ++m_host_call_sites[ppc.pc];
+           SyncIn();
+           bool handled = m_guest.host_call(&m_guest, m_guest.pc);
+           if (!handled && m_guest.pc < m_guest.ram_size)
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_SMC.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_SMC.cpp
+index 491c57ef3a..d6affa8daa 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_SMC.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_SMC.cpp
+@@ -279,6 +279,48 @@ bool StaticRecompCore::ChunkContainsHostCall(u32 index) const
+   return found;
+ }
+ 
++bool StaticRecompCore::RegionNeedsInterception(u32 start, u32 end) const
++{
++  if (end <= start)
++    return false;
++
++  const u64 key = (static_cast<u64>(start) << 32) | end;
++  const auto cached = m_native_region_blocked.find(key);
++  if (cached != m_native_region_blocked.end())
++    return cached->second;
++
++  bool blocked = false;
++  for (const StaticRecompRange& range : m_forced_fallback_ranges)
++  {
++    if (start < range.end && range.start < end)
++    {
++      blocked = true;
++      break;
++    }
++  }
++  if (!blocked && m_module_source.host_call_contains)
++  {
++    if (m_module_source.host_call_range_contains)
++    {
++      blocked = m_module_source.host_call_range_contains(start, end,
++                                                         m_module_source.host_call_user);
++    }
++    else
++    {
++      for (u32 address = start; address < end; address += 4)
++      {
++        if (IsHostCallAddress(address))
++        {
++          blocked = true;
++          break;
++        }
++      }
++    }
++  }
++  m_native_region_blocked.emplace(key, blocked);
++  return blocked;
++}
++
+ void StaticRecompCore::VerifyChunk(u32 index)
+ {
+   const auto& chunk = m_module->chunk_ranges[index];
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Sync.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Sync.cpp
+index e8d0287008..aa9387dedb 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Sync.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Sync.cpp
+@@ -8,6 +8,12 @@
+ #include "Core/PowerPC/StaticRecomp/StaticRecompCore.h"
+ #include "Core/System.h"
+ 
++#include "Core/CoreTiming.h"
++#include "Core/HW/SystemTimers.h"
++#include "Core/PowerPC/PowerPC.h"
++#include "Core/PowerPC/StaticRecomp/StaticRecompCore.h"
++#include "Core/System.h"
++
+ void StaticRecompCore::SetPPCStateFromGuestState(const CPUState& s, PowerPC::PowerPCState& ppc)
+ {
+   std::memcpy(ppc.gpr, s.gpr, sizeof(ppc.gpr));
+diff --git a/Source/Core/DolphinNoGUI/PlatformWin32.cpp b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
+index 3402fdae95..9341767a12 100644
+--- a/Source/Core/DolphinNoGUI/PlatformWin32.cpp
++++ b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
+@@ -28,6 +28,34 @@
+ #include "VideoCommon/Present.h"
+ #include "resource.h"
+ 
++void Host_RequestGameReset();
++bool Host_IsNavigationWidescreenEnabled();
++void Host_ToggleNavigationWidescreen();
++bool Host_IsNavigationOverlayVisible();
++void Host_ToggleNavigationOverlay();
++int Host_GetUltrawideEfbScale();
++void Host_SetUltrawideEfbScale(int scale);
++void Host_RequestNavigationMapFit();
++bool Host_IsTextUpscaleEnabled();
++void Host_ToggleTextUpscale();
++bool Host_IsHighResolutionTexturesEnabled();
++void Host_ToggleHighResolutionTextures();
++bool Host_IsCommunityHdTexturePackEnabled();
++void Host_ToggleCommunityHdTexturePack();
++bool Host_IsTextureDumpingEnabled();
++void Host_ToggleTextureDumping();
++bool Host_IsInputOverlayEnabled();
++void Host_ToggleInputOverlay();
++bool Host_IsMinimapHighContrastEnabled();
++void Host_ToggleMinimapHighContrast();
++bool Host_IsFastForwardEnabled();
++void Host_ToggleFastForwardEnabled();
++void Host_SetFastForwardActive(bool active);
++bool Host_IsSixtyFpsEnabled();
++void Host_ToggleSixtyFps();
++bool Host_IsAutosaveEnabled();
++void Host_ToggleAutosave();
++
+ namespace
+ {
+ // Menu command ids. Load State entries are allocated a contiguous range,
+@@ -36,12 +64,24 @@ constexpr UINT ID_SAVE_STATE = 41001;
+ constexpr UINT ID_PAUSE = 41002;
+ constexpr UINT ID_MUTE = 41003;
+ constexpr UINT ID_FULLSCREEN = 41004;
++constexpr UINT ID_NAV_TOGGLE_MAP = 41005;
++constexpr UINT ID_NAV_FIT_MAP = 41006;
++constexpr UINT ID_NAV_WIDESCREEN = 41007;
++constexpr UINT ID_NAV_RESTART = 41009;
++constexpr UINT ID_NAV_ULTRAWIDE_SCALE_3X = 41013;
++constexpr UINT ID_NAV_ULTRAWIDE_SCALE_4X = 41014;
++constexpr UINT ID_NAV_ULTRAWIDE_SCALE_5X = 41015;
++constexpr UINT ID_NAV_ULTRAWIDE_SCALE_6X = 41016;
++constexpr UINT ID_NAV_TEXT_UPSCALE = 41017;
++constexpr UINT ID_NAV_INPUT_OVERLAY = 41020;
++constexpr UINT ID_NAV_MINIMAP_HIGH_CONTRAST = 41021;
++constexpr UINT ID_NAV_FAST_FORWARD = 41022;
++constexpr UINT ID_NAV_AUTOSAVE = 41023;
++constexpr UINT ID_NAV_SIXTY_FPS = 41024;
++constexpr UINT ID_NAV_COMMUNITY_HD_TEXTURE_PACK = 41025;
+ constexpr UINT ID_LOAD_STATE_FIRST = 41100;
+ constexpr UINT ID_LOAD_STATE_LAST = 41199;
+ 
+-// Hold-to-fast-forward target. 2x is fast enough to skip a cutscene without
+-// outrunning what most hosts can actually emulate.
+-constexpr float FAST_FORWARD_SPEED = 2.0f;
+ 
+ class PlatformWin32 final : public Platform
+ {
+@@ -65,6 +105,7 @@ private:
+   void RefreshMenu(HMENU menu);
+   void SaveStateToStatesDirectory();
+   void ToggleFullscreen();
++  void SetFullscreen(bool fullscreen);
+   void UpdateWindowPosition();
+   void ProcessEvents();
+ 
+@@ -73,13 +114,14 @@ private:
+   HMENU m_file_menu{};
+   HMENU m_load_menu{};
+   HMENU m_view_menu{};
++  HMENU m_ultrawide_quality_menu{};
+   // Parallel to the Load State menu entries, rebuilt whenever it opens.
+   std::vector<std::string> m_load_state_paths;
+   std::time_t m_last_save_time{};
+   std::size_t m_save_sequence{};
+-  bool m_fullscreen = false;
+-  LONG m_windowed_style = 0;
+-  RECT m_windowed_rect{};
++  WINDOWPLACEMENT m_windowed_placement{sizeof(WINDOWPLACEMENT)};
++  LONG_PTR m_windowed_style = WS_OVERLAPPEDWINDOW;
++  LONG_PTR m_windowed_ex_style = WS_EX_CLIENTEDGE;
+ 
+   int m_window_x = Config::Get(Config::MAIN_RENDER_WINDOW_XPOS);
+   int m_window_y = Config::Get(Config::MAIN_RENDER_WINDOW_YPOS);
+@@ -141,19 +183,53 @@ bool PlatformWin32::CreateMenus()
+   m_file_menu = CreatePopupMenu();
+   m_load_menu = CreatePopupMenu();
+   m_view_menu = CreatePopupMenu();
+-  if (!m_menu || !m_file_menu || !m_load_menu || !m_view_menu)
++  m_ultrawide_quality_menu = CreatePopupMenu();
++  if (!m_menu || !m_file_menu || !m_load_menu || !m_view_menu ||
++      !m_ultrawide_quality_menu)
+     return false;
+ 
+   AppendMenuW(m_file_menu, MF_STRING, ID_SAVE_STATE, L"&Save State\tF1");
+   AppendMenuW(m_file_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(m_load_menu), L"&Load State");
+   AppendMenuW(m_file_menu, MF_SEPARATOR, 0, nullptr);
++  AppendMenuW(m_file_menu, MF_STRING, ID_NAV_RESTART, L"&Restart Game");
++  AppendMenuW(m_file_menu, MF_SEPARATOR, 0, nullptr);
+   // Checked state is refreshed from the core when the menu opens, so it cannot
+   // drift out of step with an emulation that was paused some other way.
+   AppendMenuW(m_file_menu, MF_STRING, ID_PAUSE, L"&Pause");
++  AppendMenuW(m_file_menu, MF_STRING, ID_NAV_AUTOSAVE, L"Rotating &Autosaves");
+ 
+   AppendMenuW(m_view_menu, MF_STRING, ID_FULLSCREEN, L"&Fullscreen\tAlt+Enter");
+   AppendMenuW(m_view_menu, MF_STRING, ID_MUTE, L"&Mute Audio");
+-
++  AppendMenuW(m_view_menu, MF_SEPARATOR, 0, nullptr);
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_TOGGLE_MAP, L"&Show Navigation Map");
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_FIT_MAP, L"&Fit Map Bounds");
++  AppendMenuW(m_view_menu, MF_SEPARATOR, 0, nullptr);
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_WIDESCREEN, L"Native &Ultrawide");
++  AppendMenuW(m_ultrawide_quality_menu, MF_STRING,
++              ID_NAV_ULTRAWIDE_SCALE_3X, L"3x Performance");
++  AppendMenuW(m_ultrawide_quality_menu, MF_STRING,
++              ID_NAV_ULTRAWIDE_SCALE_4X, L"4x Balanced");
++  AppendMenuW(m_ultrawide_quality_menu, MF_STRING,
++              ID_NAV_ULTRAWIDE_SCALE_5X, L"5x Quality");
++  AppendMenuW(m_ultrawide_quality_menu, MF_STRING,
++              ID_NAV_ULTRAWIDE_SCALE_6X, L"6x Ultra");
++  AppendMenuW(m_view_menu, MF_POPUP,
++              reinterpret_cast<UINT_PTR>(m_ultrawide_quality_menu),
++              L"Ultrawide Render &Quality");
++  AppendMenuW(m_view_menu, MF_SEPARATOR, 0, nullptr);
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_TEXT_UPSCALE,
++              L"High-Resolution &Text");
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_COMMUNITY_HD_TEXTURE_PACK,
++              L"Community HD Texture &Pack");
++  AppendMenuW(m_view_menu, MF_SEPARATOR, 0, nullptr);
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_INPUT_OVERLAY,
++              L"Controller &Input Overlay");
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_MINIMAP_HIGH_CONTRAST,
++              L"High-Contrast &Minimap");
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_SIXTY_FPS,
++              L"60 &FPS Gameplay Patch (Relaunch Required)");
++  AppendMenuW(m_view_menu, MF_STRING, ID_NAV_FAST_FORWARD,
++              L"Hold Space to &Fast-Forward");
+   AppendMenuW(m_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(m_file_menu), L"&File");
+   AppendMenuW(m_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(m_view_menu), L"&View");
+   return SetMenu(m_hwnd, m_menu) != FALSE;
+@@ -168,6 +244,9 @@ void PlatformWin32::RefreshMenu(const HMENU menu)
+     auto& system = Core::System::GetInstance();
+     const bool paused = Core::GetState(system) == Core::State::Paused;
+     CheckMenuItem(m_file_menu, ID_PAUSE, MF_BYCOMMAND | (paused ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_file_menu, ID_NAV_AUTOSAVE,
++                  MF_BYCOMMAND |
++                      (Host_IsAutosaveEnabled() ? MF_CHECKED : MF_UNCHECKED));
+     return;
+   }
+ 
+@@ -176,8 +255,58 @@ void PlatformWin32::RefreshMenu(const HMENU menu)
+     CheckMenuItem(m_view_menu, ID_MUTE,
+                   MF_BYCOMMAND |
+                       (Config::Get(Config::MAIN_AUDIO_MUTED) ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_TOGGLE_MAP,
++                  MF_BYCOMMAND |
++                      (Host_IsNavigationOverlayVisible() ? MF_CHECKED :
++                                                           MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_WIDESCREEN,
++                  MF_BYCOMMAND |
++                      (Host_IsNavigationWidescreenEnabled() ? MF_CHECKED : MF_UNCHECKED));
+     CheckMenuItem(m_view_menu, ID_FULLSCREEN,
+-                  MF_BYCOMMAND | (m_fullscreen ? MF_CHECKED : MF_UNCHECKED));
++                  MF_BYCOMMAND | (m_window_fullscreen ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_TEXT_UPSCALE,
++                  MF_BYCOMMAND |
++                      (Host_IsTextUpscaleEnabled() ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_COMMUNITY_HD_TEXTURE_PACK,
++                  MF_BYCOMMAND |
++                      (Host_IsCommunityHdTexturePackEnabled() ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_INPUT_OVERLAY,
++                  MF_BYCOMMAND |
++                      (Host_IsInputOverlayEnabled() ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_MINIMAP_HIGH_CONTRAST,
++                  MF_BYCOMMAND |
++                      (Host_IsMinimapHighContrastEnabled() ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_FAST_FORWARD,
++                  MF_BYCOMMAND |
++                      (Host_IsFastForwardEnabled() ? MF_CHECKED : MF_UNCHECKED));
++    CheckMenuItem(m_view_menu, ID_NAV_SIXTY_FPS,
++                  MF_BYCOMMAND |
++                      (Host_IsSixtyFpsEnabled() ? MF_CHECKED : MF_UNCHECKED));
++    return;
++  }
++  if (menu == m_ultrawide_quality_menu)
++  {
++    UINT selected = ID_NAV_ULTRAWIDE_SCALE_5X;
++    switch (Host_GetUltrawideEfbScale())
++    {
++    case 3:
++      selected = ID_NAV_ULTRAWIDE_SCALE_3X;
++      break;
++    case 4:
++      selected = ID_NAV_ULTRAWIDE_SCALE_4X;
++      break;
++    case 5:
++      selected = ID_NAV_ULTRAWIDE_SCALE_5X;
++      break;
++    case 6:
++      selected = ID_NAV_ULTRAWIDE_SCALE_6X;
++      break;
++    default:
++      break;
++    }
++    CheckMenuRadioItem(m_ultrawide_quality_menu,
++                       ID_NAV_ULTRAWIDE_SCALE_3X,
++                       ID_NAV_ULTRAWIDE_SCALE_6X, selected, MF_BYCOMMAND);
+     return;
+   }
+ 
+@@ -231,45 +360,67 @@ void PlatformWin32::SaveStateToStatesDirectory()
+ 
+ void PlatformWin32::ToggleFullscreen()
+ {
+-  if (!m_fullscreen)
+-  {
+-    GetWindowRect(m_hwnd, &m_windowed_rect);
+-    m_windowed_style = GetWindowLong(m_hwnd, GWL_STYLE);
++  SetFullscreen(!m_window_fullscreen);
++}
+ 
+-    MONITORINFO monitor{};
+-    monitor.cbSize = sizeof(monitor);
+-    if (!GetMonitorInfo(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &monitor))
++void PlatformWin32::SetFullscreen(bool fullscreen)
++{
++  if (!m_hwnd || fullscreen == m_window_fullscreen)
++    return;
++
++  if (fullscreen)
++  {
++    m_windowed_style = GetWindowLongPtr(m_hwnd, GWL_STYLE);
++    m_windowed_ex_style = GetWindowLongPtr(m_hwnd, GWL_EXSTYLE);
++    m_windowed_placement.length = sizeof(WINDOWPLACEMENT);
++    GetWindowPlacement(m_hwnd, &m_windowed_placement);
++
++    const HMONITOR monitor = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
++    MONITORINFO monitor_info{sizeof(MONITORINFO)};
++    if (!GetMonitorInfo(monitor, &monitor_info))
+       return;
+ 
+     SetMenu(m_hwnd, nullptr);
+-    SetWindowLong(m_hwnd, GWL_STYLE, m_windowed_style & ~WS_OVERLAPPEDWINDOW);
+-    SetWindowPos(m_hwnd, HWND_TOP, monitor.rcMonitor.left, monitor.rcMonitor.top,
+-                 monitor.rcMonitor.right - monitor.rcMonitor.left,
+-                 monitor.rcMonitor.bottom - monitor.rcMonitor.top,
+-                 SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+-    m_fullscreen = true;
+-    return;
++    SetWindowLongPtr(m_hwnd, GWL_STYLE,
++                     m_windowed_style & ~static_cast<LONG_PTR>(WS_OVERLAPPEDWINDOW));
++    SetWindowLongPtr(m_hwnd, GWL_EXSTYLE,
++                     m_windowed_ex_style & ~static_cast<LONG_PTR>(WS_EX_CLIENTEDGE));
++    const RECT& bounds = monitor_info.rcMonitor;
++    SetWindowPos(m_hwnd, HWND_TOP, bounds.left, bounds.top,
++                 bounds.right - bounds.left, bounds.bottom - bounds.top,
++                 SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
++    m_window_fullscreen = true;
++  }
++  else
++  {
++    SetWindowLongPtr(m_hwnd, GWL_STYLE, m_windowed_style);
++    SetWindowLongPtr(m_hwnd, GWL_EXSTYLE, m_windowed_ex_style);
++    SetMenu(m_hwnd, m_menu);
++    SetWindowPlacement(m_hwnd, &m_windowed_placement);
++    SetWindowPos(m_hwnd, nullptr, 0, 0, 0, 0,
++                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE |
++                     SWP_NOZORDER | SWP_NOOWNERZORDER);
++    m_window_fullscreen = false;
+   }
+ 
+-  SetWindowLong(m_hwnd, GWL_STYLE, m_windowed_style);
+-  SetMenu(m_hwnd, m_menu);
+-  SetWindowPos(m_hwnd, nullptr, m_windowed_rect.left, m_windowed_rect.top,
+-               m_windowed_rect.right - m_windowed_rect.left,
+-               m_windowed_rect.bottom - m_windowed_rect.top,
+-               SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOZORDER);
+-  m_fullscreen = false;
++  Config::SetCurrent(Config::MAIN_FULLSCREEN, fullscreen);
++  DrawMenuBar(m_hwnd);
++  if (g_presenter)
++    g_presenter->ResizeSurface();
+ }
+ 
+ bool PlatformWin32::Init()
+ {
++  // Keep the HWND client area, Vulkan swapchain, ImGui overlay, and mouse
++  // coordinates on the same physical-pixel grid on scaled ultrawide displays.
++  SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
++  SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
++
+   if (!RegisterRenderWindowClass() || !CreateRenderWindow() || !CreateMenus())
+     return false;
+ 
+-  // TODO: Enter fullscreen if enabled.
+   if (Config::Get(Config::MAIN_FULLSCREEN))
+-  {
+-    ProcessEvents();
+-  }
++    SetFullscreen(true);
+ 
+   if (Config::Get(Config::MAIN_DISABLE_SCREENSAVER))
+     SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
+@@ -364,16 +515,16 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
+   break;
+ 
+   case WM_KEYDOWN:
+-    // Bit 30 of lParam is the previous key state: ignore auto-repeat, or holding
+-    // F1 down would write a state every few milliseconds.
++    // Bit 30 is the previous key state. Ignore auto-repeat so holding F1 cannot
++    // queue a new savestate every few milliseconds.
+     if (wParam == VK_F1 && (static_cast<ULONG_PTR>(lParam) & (1u << 30)) == 0)
+     {
+       platform->SaveStateToStatesDirectory();
+       return 0;
+     }
+-    else if (wParam == VK_SPACE)
++    else if (wParam == VK_SPACE && Host_IsFastForwardEnabled())
+     {
+-      Config::SetCurrent(Config::MAIN_EMULATION_SPEED, FAST_FORWARD_SPEED);
++      Host_SetFastForwardActive(true);
+       return 0;
+     }
+     else if (wParam == VK_F11)
+@@ -381,9 +532,9 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
+       platform->ToggleFullscreen();
+       return 0;
+     }
+-    else if (wParam == VK_ESCAPE && platform->m_fullscreen)
++    else if (wParam == VK_ESCAPE && platform->m_window_fullscreen)
+     {
+-      platform->ToggleFullscreen();
++      platform->SetFullscreen(false);
+       return 0;
+     }
+     else if (wParam == VK_ESCAPE)
+@@ -395,15 +546,14 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
+   case WM_KEYUP:
+     if (wParam == VK_SPACE)
+     {
+-      Config::SetCurrent(Config::MAIN_EMULATION_SPEED, 1.0f);
++      Host_SetFastForwardActive(false);
+       return 0;
+     }
+     break;
+ 
+   case WM_KILLFOCUS:
+-    // Never leave emulation running fast because Space was released while
+-    // another window had focus and the key-up went elsewhere.
+-    Config::SetCurrent(Config::MAIN_EMULATION_SPEED, 1.0f);
++    // Never leave emulation sped up if Space is released while another window has focus.
++    Host_SetFastForwardActive(false);
+     break;
+ 
+   case WM_SYSKEYDOWN:
+@@ -442,6 +592,46 @@ LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wPa
+     {
+       platform->ToggleFullscreen();
+     }
++    else if (command == ID_NAV_RESTART)
++    {
++      Host_RequestGameReset();
++    }
++    else if (command == ID_NAV_AUTOSAVE)
++    {
++      Host_ToggleAutosave();
++    }
++    else if (command == ID_NAV_TOGGLE_MAP)
++    {
++      Host_ToggleNavigationOverlay();
++    }
++    else if (command == ID_NAV_WIDESCREEN)
++    {
++      Host_ToggleNavigationWidescreen();
++    }
++    else if (command == ID_NAV_ULTRAWIDE_SCALE_3X)
++      Host_SetUltrawideEfbScale(3);
++    else if (command == ID_NAV_ULTRAWIDE_SCALE_4X)
++      Host_SetUltrawideEfbScale(4);
++    else if (command == ID_NAV_ULTRAWIDE_SCALE_5X)
++      Host_SetUltrawideEfbScale(5);
++    else if (command == ID_NAV_ULTRAWIDE_SCALE_6X)
++      Host_SetUltrawideEfbScale(6);
++    else if (command == ID_NAV_TEXT_UPSCALE)
++      Host_ToggleTextUpscale();
++    else if (command == ID_NAV_COMMUNITY_HD_TEXTURE_PACK)
++      Host_ToggleCommunityHdTexturePack();
++    else if (command == ID_NAV_INPUT_OVERLAY)
++      Host_ToggleInputOverlay();
++    else if (command == ID_NAV_MINIMAP_HIGH_CONTRAST)
++      Host_ToggleMinimapHighContrast();
++    else if (command == ID_NAV_FAST_FORWARD)
++      Host_ToggleFastForwardEnabled();
++    else if (command == ID_NAV_SIXTY_FPS)
++      Host_ToggleSixtyFps();
++    else if (command == ID_NAV_FIT_MAP)
++    {
++      Host_RequestNavigationMapFit();
++    }
+     else if (command >= ID_LOAD_STATE_FIRST && command <= ID_LOAD_STATE_LAST)
+     {
+       const std::size_t index = command - ID_LOAD_STATE_FIRST;
+diff --git a/Source/Core/InputCommon/CMakeLists.txt b/Source/Core/InputCommon/CMakeLists.txt
+index ddf8c30cf4..b6b715734a 100644
+--- a/Source/Core/InputCommon/CMakeLists.txt
++++ b/Source/Core/InputCommon/CMakeLists.txt
+@@ -62,6 +62,8 @@ add_library(inputcommon
+   ControllerInterface/InputBackend.h
+   ControllerInterface/MappingCommon.cpp
+   ControllerInterface/MappingCommon.h
++  ControllerInterface/Touch/InputOverrider.cpp
++  ControllerInterface/Touch/InputOverrider.h
+   ControllerInterface/Wiimote/WiimoteController.cpp
+   ControllerInterface/Wiimote/WiimoteController.h
+   ControlReference/ControlReference.cpp
+@@ -141,8 +143,6 @@ elseif(ANDROID)
+   target_sources(inputcommon PRIVATE
+     ControllerInterface/Android/Android.cpp
+     ControllerInterface/Android/Android.h
+-    ControllerInterface/Touch/InputOverrider.cpp
+-    ControllerInterface/Touch/InputOverrider.h
+   )
+   target_link_libraries(inputcommon PRIVATE
+     androidcommon
+diff --git a/Source/Core/VideoCommon/AbstractGfx.cpp b/Source/Core/VideoCommon/AbstractGfx.cpp
+index 851dc485fd..5184e4a497 100644
+--- a/Source/Core/VideoCommon/AbstractGfx.cpp
++++ b/Source/Core/VideoCommon/AbstractGfx.cpp
+@@ -147,6 +147,52 @@ void AbstractGfx::ScaleTexture(AbstractFramebuffer* dst_framebuffer,
+     dst_framebuffer->GetColorAttachment()->FinishedRendering();
+ }
+ 
++void AbstractGfx::SharpenAndScaleTextTexture(AbstractFramebuffer* dst_framebuffer,
++                                             const MathUtil::Rectangle<int>& dst_rect,
++                                             const AbstractTexture* src_texture,
++                                             const MathUtil::Rectangle<int>& src_rect,
++                                             bool preserve_color)
++{
++  if (g_backend_info.api_type == APIType::Nothing)
++  {
++    ScaleTexture(dst_framebuffer, dst_rect, src_texture, src_rect);
++    return;
++  }
++
++  ASSERT(dst_framebuffer->GetColorFormat() == AbstractTextureFormat::RGBA8);
++  BeginUtilityDrawing();
++
++  const auto converted_src_rect =
++      ConvertFramebufferRectangle(src_rect, src_texture->GetWidth(), src_texture->GetHeight());
++  const float rcp_src_width = 1.0f / src_texture->GetWidth();
++  const float rcp_src_height = 1.0f / src_texture->GetHeight();
++  const std::array<float, 4> uniforms = {{converted_src_rect.left * rcp_src_width,
++                                          converted_src_rect.top * rcp_src_height,
++                                          converted_src_rect.GetWidth() * rcp_src_width,
++                                          converted_src_rect.GetHeight() * rcp_src_height}};
++  g_vertex_manager->UploadUtilityUniforms(&uniforms, sizeof(uniforms));
++
++  if (static_cast<u32>(dst_rect.GetWidth()) == dst_framebuffer->GetWidth() &&
++      static_cast<u32>(dst_rect.GetHeight()) == dst_framebuffer->GetHeight())
++  {
++    SetAndDiscardFramebuffer(dst_framebuffer);
++  }
++  else
++  {
++    SetFramebuffer(dst_framebuffer);
++  }
++
++  SetViewportAndScissor(ConvertFramebufferRectangle(dst_rect, dst_framebuffer));
++  SetPipeline(preserve_color ? g_shader_cache->GetRGBA8ColorTextSharpenPipeline() :
++                               g_shader_cache->GetRGBA8TextSharpenPipeline());
++  SetTexture(0, src_texture);
++  SetSamplerState(0, RenderState::GetLinearSamplerState());
++  Draw(0, 3);
++  EndUtilityDrawing();
++  if (dst_framebuffer->GetColorAttachment())
++    dst_framebuffer->GetColorAttachment()->FinishedRendering();
++}
++
+ MathUtil::Rectangle<int>
+ AbstractGfx::ConvertFramebufferRectangle(const MathUtil::Rectangle<int>& rect,
+                                          const AbstractFramebuffer* framebuffer) const
+diff --git a/Source/Core/VideoCommon/AbstractGfx.h b/Source/Core/VideoCommon/AbstractGfx.h
+index 3a3c72c684..ea3341f635 100644
+--- a/Source/Core/VideoCommon/AbstractGfx.h
++++ b/Source/Core/VideoCommon/AbstractGfx.h
+@@ -151,6 +151,14 @@ public:
+                             const AbstractTexture* src_texture,
+                             const MathUtil::Rectangle<int>& src_rect);
+ 
++  // Scales an intensity/coverage texture and tightens the bilinear transition around glyph edges.
++  // Software rendering falls back to its regular scaler.
++  void SharpenAndScaleTextTexture(AbstractFramebuffer* dst_framebuffer,
++                                  const MathUtil::Rectangle<int>& dst_rect,
++                                  const AbstractTexture* src_texture,
++                                  const MathUtil::Rectangle<int>& src_rect,
++                                  bool preserve_color = false);
++
+   // Converts an upper-left to lower-left if required by the backend, optionally
+   // clamping to the framebuffer size.
+   MathUtil::Rectangle<int> ConvertFramebufferRectangle(const MathUtil::Rectangle<int>& rect,
+diff --git a/Source/Core/VideoCommon/CPUCull.cpp b/Source/Core/VideoCommon/CPUCull.cpp
+index d469235371..cc53a6a17d 100644
+--- a/Source/Core/VideoCommon/CPUCull.cpp
++++ b/Source/Core/VideoCommon/CPUCull.cpp
+@@ -12,6 +12,7 @@
+ #include "VideoCommon/CPMemory.h"
+ #include "VideoCommon/VertexManagerBase.h"
+ #include "VideoCommon/VertexShaderManager.h"
++#include "VideoCommon/VideoConfig.h"
+ #include "VideoCommon/XFMemory.h"
+ 
+ // We really want things like c.w * a.x - a.w * c.x to stay symmetric, so they cancel to zero on
+@@ -164,7 +165,14 @@ bool CPUCull::AreAllVerticesCulled(VertexLoaderBase* loader, OpcodeDecoder::Prim
+   const TransformFunction transform = m_transform_table[posHas3Elems][perVertexPosMtx];
+   transform(m_transform_buffer.get(), src, stride, count);
+   const CullFunction cull = m_cull_table[primitive][cull_mode];
+-  return cull(m_transform_buffer.get(), count);
++  // Native Hor+ can expose geometry outside the emulated projection that was
++  // current when a display list was prepared. Keep rejecting degenerate,
++  // back-facing, and vertically clipped batches, but leave horizontal clip
++  // rejection to the GPU while the native safe-area projection is active.
++  // Disabling CPU culling entirely is not viable for Colosseum because it
++  // submits large unused vertex batches in several rooms and cutscenes.
++  return cull(m_transform_buffer.get(), count,
++              g_ActiveConfig.bWidescreenHudSafeArea);
+ }
+ 
+ template <typename T>
+diff --git a/Source/Core/VideoCommon/CPUCull.h b/Source/Core/VideoCommon/CPUCull.h
+index a5c59af546..0f7059f33a 100644
+--- a/Source/Core/VideoCommon/CPUCull.h
++++ b/Source/Core/VideoCommon/CPUCull.h
+@@ -21,7 +21,7 @@ public:
+   };
+ 
+   using TransformFunction = void (*)(void*, const void*, u32, int);
+-  using CullFunction = bool (*)(const CPUCull::TransformedVertex*, int);
++  using CullFunction = bool (*)(const CPUCull::TransformedVertex*, int, bool);
+ 
+ private:
+   template <typename T>
+diff --git a/Source/Core/VideoCommon/CPUCullImpl.h b/Source/Core/VideoCommon/CPUCullImpl.h
+index e9a1d545c2..d258d13052 100644
+--- a/Source/Core/VideoCommon/CPUCullImpl.h
++++ b/Source/Core/VideoCommon/CPUCullImpl.h
+@@ -554,7 +554,8 @@ ATTR_TARGET static void TransformVertices(void* output, const void* vertices, u3
+ template <CullMode Mode>
+ ATTR_TARGET DOLPHIN_FORCE_INLINE static bool CullTriangle(const CPUCull::TransformedVertex& a,
+                                                           const CPUCull::TransformedVertex& b,
+-                                                          const CPUCull::TransformedVertex& c)
++                                                          const CPUCull::TransformedVertex& c,
++                                                          bool skip_horizontal_clip)
+ {
+   if (Mode == CullMode::All)
+     return true;
+@@ -625,6 +626,11 @@ ATTR_TARGET DOLPHIN_FORCE_INLINE static bool CullTriangle(const CPUCull::Transfo
+   __m128i y_gt_pw = _mm_castps_si128(_mm_cmple_ps(allpw, ally));
+   __m128i x_lt_nw = _mm_castps_si128(_mm_cmplt_ps(allx, allnw));
+   __m128i y_lt_nw = _mm_castps_si128(_mm_cmplt_ps(ally, allnw));
++  if (skip_horizontal_clip)
++  {
++    x_gt_pw = _mm_setzero_si128();
++    x_lt_nw = _mm_setzero_si128();
++  }
+   __m128i any_out_of_bounds = _mm_packs_epi16(_mm_packs_epi32(x_lt_nw, y_lt_nw),  //
+                                               _mm_packs_epi32(x_gt_pw, y_gt_pw));
+   cull |= 0 != _mm_movemask_epi8(_mm_cmpeq_epi32(_mm_set1_epi32(~0), any_out_of_bounds));
+@@ -639,14 +645,21 @@ ATTR_TARGET DOLPHIN_FORCE_INLINE static bool CullTriangle(const CPUCull::Transfo
+   uint16x8_t y_gt_pw = vreinterpretq_u16_u32(vcgtq_f32(ally, allpw));
+   uint16x8_t x_lt_nw = vreinterpretq_u16_u32(vcltq_f32(allx, allnw));
+   uint16x8_t y_lt_nw = vreinterpretq_u16_u32(vcltq_f32(ally, allnw));
++  if (skip_horizontal_clip)
++  {
++    x_gt_pw = vdupq_n_u16(0);
++    x_lt_nw = vdupq_n_u16(0);
++  }
+   uint8x16_t lt_nw = vreinterpretq_u8_u16(vuzp1q_u16(x_lt_nw, y_lt_nw));
+   uint8x16_t gt_pw = vreinterpretq_u8_u16(vuzp1q_u16(x_gt_pw, y_gt_pw));
+   uint32x4_t any_out_of_bounds = vreinterpretq_u32_u8(vuzp1q_u8(lt_nw, gt_pw));
+   cull |= 0xFFFFFFFF == vmaxvq_u32(any_out_of_bounds);
+ #else
+-  cull |= a.x < -a.w && b.x < -b.w && c.x < -c.w;
++  if (!skip_horizontal_clip)
++    cull |= a.x < -a.w && b.x < -b.w && c.x < -c.w;
+   cull |= a.y < -a.w && b.y < -b.w && c.y < -c.w;
+-  cull |= a.x > a.w && b.x > b.w && c.x > c.w;
++  if (!skip_horizontal_clip)
++    cull |= a.x > a.w && b.x > b.w && c.x > c.w;
+   cull |= a.y > a.w && b.y > b.w && c.y > c.w;
+ #endif
+ 
+@@ -655,7 +668,7 @@ ATTR_TARGET DOLPHIN_FORCE_INLINE static bool CullTriangle(const CPUCull::Transfo
+ 
+ template <OpcodeDecoder::Primitive Primitive, CullMode Mode>
+ ATTR_TARGET static bool AreAllVerticesCulled(const CPUCull::TransformedVertex* transformed,
+-                                             int count)
++                                             int count, bool skip_horizontal_clip)
+ {
+   switch (Primitive)
+   {
+@@ -665,15 +678,18 @@ ATTR_TARGET static bool AreAllVerticesCulled(const CPUCull::TransformedVertex* t
+     int i = 3;
+     for (; i < count; i += 4)
+     {
+-      if (!CullTriangle<Mode>(transformed[i - 3], transformed[i - 2], transformed[i - 1]))
++      if (!CullTriangle<Mode>(transformed[i - 3], transformed[i - 2], transformed[i - 1],
++                              skip_horizontal_clip))
+         return false;
+-      if (!CullTriangle<Mode>(transformed[i - 3], transformed[i - 1], transformed[i - 0]))
++      if (!CullTriangle<Mode>(transformed[i - 3], transformed[i - 1], transformed[i - 0],
++                              skip_horizontal_clip))
+         return false;
+     }
+     // three vertices remaining, so render a triangle
+     if (i == count)
+     {
+-      if (!CullTriangle<Mode>(transformed[i - 3], transformed[i - 2], transformed[i - 1]))
++      if (!CullTriangle<Mode>(transformed[i - 3], transformed[i - 2], transformed[i - 1],
++                              skip_horizontal_clip))
+         return false;
+     }
+     break;
+@@ -681,7 +697,8 @@ ATTR_TARGET static bool AreAllVerticesCulled(const CPUCull::TransformedVertex* t
+   case OpcodeDecoder::Primitive::GX_DRAW_TRIANGLES:
+     for (int i = 2; i < count; i += 3)
+     {
+-      if (!CullTriangle<Mode>(transformed[i - 2], transformed[i - 1], transformed[i - 0]))
++      if (!CullTriangle<Mode>(transformed[i - 2], transformed[i - 1], transformed[i - 0],
++                              skip_horizontal_clip))
+         return false;
+     }
+     break;
+@@ -690,7 +707,8 @@ ATTR_TARGET static bool AreAllVerticesCulled(const CPUCull::TransformedVertex* t
+     bool wind = false;
+     for (int i = 2; i < count; ++i)
+     {
+-      if (!CullTriangle<Mode>(transformed[i - 2], transformed[i - !wind], transformed[i - wind]))
++      if (!CullTriangle<Mode>(transformed[i - 2], transformed[i - !wind], transformed[i - wind],
++                              skip_horizontal_clip))
+         return false;
+       wind = !wind;
+     }
+@@ -699,7 +717,8 @@ ATTR_TARGET static bool AreAllVerticesCulled(const CPUCull::TransformedVertex* t
+   case OpcodeDecoder::Primitive::GX_DRAW_TRIANGLE_FAN:
+     for (int i = 2; i < count; ++i)
+     {
+-      if (!CullTriangle<Mode>(transformed[0], transformed[i - 1], transformed[i]))
++      if (!CullTriangle<Mode>(transformed[0], transformed[i - 1], transformed[i],
++                              skip_horizontal_clip))
+         return false;
+     }
+     break;
+diff --git a/Source/Core/VideoCommon/ColosseumProjection.h b/Source/Core/VideoCommon/ColosseumProjection.h
+new file mode 100644
+index 0000000000..06f41580cc
+--- /dev/null
++++ b/Source/Core/VideoCommon/ColosseumProjection.h
+@@ -0,0 +1,49 @@
++// Copyright 2026 Dolphin Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <cmath>
++
++namespace VideoCommon
++{
++constexpr float COLOSSEUM_AUTHORED_ASPECT = 4.0f / 3.0f;
++constexpr float COLOSSEUM_WIDE_ASPECT = 16.0f / 9.0f;
++constexpr float COLOSSEUM_AUTHORED_MENU_MINIMUM_SCALE =
++    COLOSSEUM_WIDE_ASPECT / COLOSSEUM_AUTHORED_ASPECT;
++constexpr float COLOSSEUM_NAMING_HORIZONTAL_SCALE = 602.0f / 640.0f;
++
++inline float GetColosseumNamingHorizontalScale(bool naming_screen_active)
++{
++  return naming_screen_active ? COLOSSEUM_NAMING_HORIZONTAL_SCALE : 1.0f;
++}
++
++inline float GetColosseumPresentationAspect(float source_aspect,
++                                             bool authored_menu_active)
++{
++  return authored_menu_active ? COLOSSEUM_AUTHORED_ASPECT : source_aspect;
++}
++
++inline float GetColosseumAuthoredMenuHorizontalScale(float raw_aspect,
++                                                      bool authored_menu_active)
++{
++  if (!authored_menu_active || !std::isfinite(raw_aspect) || raw_aspect <= 0.0f)
++    return 1.0f;
++
++  // Colosseum's embedded Pokemon cameras cache the active field aspect when a
++  // PC, party, or summary screen opens. Those models are then drawn into a
++  // 4:3 viewport, so normalize only that menu-owned perspective projection.
++  return raw_aspect / COLOSSEUM_AUTHORED_ASPECT;
++}
++
++inline bool IsColosseumSquareOffscreenViewport(float viewport_half_width,
++                                                float viewport_half_height)
++{
++  if (!std::isfinite(viewport_half_width) || !std::isfinite(viewport_half_height))
++    return false;
++
++  const float width = std::abs(viewport_half_width);
++  const float height = std::abs(viewport_half_height);
++  return width >= 32.0f && std::abs(width - height) <= 0.5f;
++}
++}  // namespace VideoCommon
+diff --git a/Source/Core/VideoCommon/ColosseumTextUpscale.h b/Source/Core/VideoCommon/ColosseumTextUpscale.h
+new file mode 100644
+index 0000000000..969c088fd6
+--- /dev/null
++++ b/Source/Core/VideoCommon/ColosseumTextUpscale.h
+@@ -0,0 +1,85 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <cstdint>
++
++namespace ColosseumTextUpscale
++{
++// Keep most of the source coverage at the center of each texel. The narrower reconstruction
++// radius rounds native pixel shoulders without spreading enough coverage to close the one-pixel
++// counters used by lowercase e and other small Colosseum glyphs.
++constexpr float COVERAGE_LOW = 0.40f;
++constexpr float COVERAGE_HIGH = 0.68f;
++constexpr float COLOR_COVERAGE_LOW = 0.10f;
++constexpr float COLOR_COVERAGE_HIGH = 0.90f;
++constexpr float RECONSTRUCTION_RADIUS = 0.55f;
++constexpr float CENTER_WEIGHT = 0.68f;
++constexpr float AXIAL_WEIGHT = 0.065f;
++constexpr float DIAGONAL_WEIGHT = 0.015f;
++
++// Battle status labels (Lv/HP/EXP) and their neighboring HUD sprites share this RGB5A3 atlas.
++// Keying the color-preserving path by both dimensions and hash keeps the text option from
++// sharpening unrelated scene textures that happen to use the same format.
++constexpr std::uint64_t BATTLE_STATUS_ATLAS_HASH = 0x592cd77b475e4a80ULL;
++
++enum class Filter
++{
++  None,
++  Coverage,
++  ColorCoverage,
++};
++
++constexpr float ReconstructCoverage(float coverage)
++{
++  if (coverage <= COVERAGE_LOW)
++    return 0.0f;
++  if (coverage >= COVERAGE_HIGH)
++    return 1.0f;
++
++  const float t = (coverage - COVERAGE_LOW) / (COVERAGE_HIGH - COVERAGE_LOW);
++  return t * t * (3.0f - 2.0f * t);
++}
++
++constexpr float CombineCoverage(float center, float axial_sum, float diagonal_sum)
++{
++  return center * CENTER_WEIGHT + axial_sum * AXIAL_WEIGHT +
++         diagonal_sum * DIAGONAL_WEIGHT;
++}
++
++struct Plan
++{
++  bool enabled = false;
++  std::uint32_t width = 0;
++  std::uint32_t height = 0;
++  Filter filter = Filter::None;
++};
++
++constexpr Plan GetPlan(bool enabled, bool is_i4, bool is_rgb5a3, std::uint32_t width,
++                       std::uint32_t height, std::uint32_t level_count,
++                       std::uint64_t texture_hash)
++{
++  constexpr std::uint32_t scale = 6;
++  if (!enabled || level_count != 1)
++    return {};
++
++  if (is_i4 && width == 512 && height == 512)
++  {
++    return {.enabled = true,
++            .width = width * scale,
++            .height = height * scale,
++            .filter = Filter::Coverage};
++  }
++
++  if (is_rgb5a3 && width == 256 && height == 239 &&
++      texture_hash == BATTLE_STATUS_ATLAS_HASH)
++  {
++    return {.enabled = true,
++            .width = width * scale,
++            .height = height * scale,
++            .filter = Filter::ColorCoverage};
++  }
++
++  return {};
++}
++}  // namespace ColosseumTextUpscale
+diff --git a/Source/Core/VideoCommon/FramebufferShaderGen.cpp b/Source/Core/VideoCommon/FramebufferShaderGen.cpp
+index 248146e2b6..7e1a0662e4 100644
+--- a/Source/Core/VideoCommon/FramebufferShaderGen.cpp
++++ b/Source/Core/VideoCommon/FramebufferShaderGen.cpp
+@@ -8,6 +8,7 @@
+ #include "Common/Logging/Log.h"
+ 
+ #include "VideoCommon/FramebufferManager.h"
++#include "VideoCommon/ColosseumTextUpscale.h"
+ #include "VideoCommon/ShaderGenCommon.h"
+ #include "VideoCommon/TextureDecoder.h"
+ #include "VideoCommon/VertexShaderGen.h"
+@@ -328,6 +329,72 @@ std::string GenerateTextureCopyPixelShader()
+   return code.GetBuffer();
+ }
+ 
++std::string GenerateTextSharpenPixelShader()
++{
++  ShaderCode code;
++  EmitSamplerDeclarations(code, 0, 1, false);
++  EmitPixelMainDeclaration(code, 1, 0);
++  code.Write("{{\n"
++             // Reconstruct a rounded silhouette from a compact, center-weighted footprint in
++             // native texel space. The small radius smooths curved shoulders while preserving
++             // the one-pixel counters in lowercase e and other narrow Colosseum glyphs.
++             "  float2 texel = float2(1.0f / 512.0f, 1.0f / 512.0f);\n"
++             "  float2 radius = texel * {:.3f}f;\n"
++             "  float center = ",
++             ColosseumTextUpscale::RECONSTRUCTION_RADIUS);
++  EmitSampleTexture(code, 0, "v_tex0");
++  code.Write(".a;\n"
++             "  float axial = ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy + float2(radius.x, 0.0f), v_tex0.z)");
++  code.Write(".a + ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy - float2(radius.x, 0.0f), v_tex0.z)");
++  code.Write(".a + ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy + float2(0.0f, radius.y), v_tex0.z)");
++  code.Write(".a + ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy - float2(0.0f, radius.y), v_tex0.z)");
++  code.Write(".a;\n"
++             "  float diagonal = ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy + radius, v_tex0.z)");
++  code.Write(".a + ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy - radius, v_tex0.z)");
++  code.Write(".a + ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy + float2(radius.x, -radius.y), v_tex0.z)");
++  code.Write(".a + ");
++  EmitSampleTexture(code, 0, "float3(v_tex0.xy + float2(-radius.x, radius.y), v_tex0.z)");
++  code.Write(".a;\n"
++             "  float reconstructed = center * {:.3f}f + axial * {:.3f}f + "
++             "diagonal * {:.3f}f;\n"
++             "  float coverage = smoothstep({:.2f}f, {:.2f}f, reconstructed);\n"
++             "  ocol0 = float4(coverage, coverage, coverage, coverage);\n"
++             "}}\n",
++             ColosseumTextUpscale::CENTER_WEIGHT, ColosseumTextUpscale::AXIAL_WEIGHT,
++             ColosseumTextUpscale::DIAGONAL_WEIGHT, ColosseumTextUpscale::COVERAGE_LOW,
++             ColosseumTextUpscale::COVERAGE_HIGH);
++  return code.GetBuffer();
++}
++
++std::string GenerateColorTextSharpenPixelShader()
++{
++  ShaderCode code;
++  EmitSamplerDeclarations(code, 0, 1, false);
++  EmitPixelMainDeclaration(code, 1, 0);
++  code.Write("{{\n"
++             "  float4 source = ");
++  EmitSampleTexture(code, 0, "v_tex0");
++  code.Write(";\n"
++             // The battle-status atlas stores colored labels and icons on transparent black.
++             // Linear enlargement blends their RGB toward black, so recover straight color
++             // before applying the broad antialiased coverage transition.
++             "  float3 straight_color = source.a > 0.001f ? "
++             "clamp(source.rgb / source.a, 0.0f, 1.0f) : float3(0.0f, 0.0f, 0.0f);\n"
++             "  float coverage = smoothstep({:.2f}f, {:.2f}f, source.a);\n"
++             "  ocol0 = float4(straight_color, coverage);\n"
++             "}}\n",
++             ColosseumTextUpscale::COLOR_COVERAGE_LOW,
++             ColosseumTextUpscale::COLOR_COVERAGE_HIGH);
++  return code.GetBuffer();
++}
++
+ std::string GenerateColorPixelShader()
+ {
+   ShaderCode code;
+diff --git a/Source/Core/VideoCommon/FramebufferShaderGen.h b/Source/Core/VideoCommon/FramebufferShaderGen.h
+index c97fec8991..5c3e186b54 100644
+--- a/Source/Core/VideoCommon/FramebufferShaderGen.h
++++ b/Source/Core/VideoCommon/FramebufferShaderGen.h
+@@ -15,6 +15,8 @@ std::string GenerateScreenQuadVertexShader();
+ std::string GeneratePassthroughGeometryShader(u32 num_tex, u32 num_colors);
+ std::string GenerateTextureCopyVertexShader();
+ std::string GenerateTextureCopyPixelShader();
++std::string GenerateTextSharpenPixelShader();
++std::string GenerateColorTextSharpenPixelShader();
+ std::string GenerateResolveColorPixelShader(u32 samples);
+ std::string GenerateResolveDepthPixelShader(u32 samples);
+ std::string GenerateClearVertexShader();
+diff --git a/Source/Core/VideoCommon/HiresTextures.cpp b/Source/Core/VideoCommon/HiresTextures.cpp
+index 869671e1eb..4db9a93176 100644
+--- a/Source/Core/VideoCommon/HiresTextures.cpp
++++ b/Source/Core/VideoCommon/HiresTextures.cpp
+@@ -85,8 +85,8 @@ void HiresTexture::Update()
+   }
+ 
+   const std::string& game_id = SConfig::GetInstance().GetGameID();
+-  const std::set<std::string> texture_directories =
+-      GetTextureDirectoriesWithGameId(File::GetUserPath(D_HIRESTEXTURES_IDX), game_id);
++  const std::vector<std::string> texture_directories =
++      GetHiresTextureDirectoriesWithGameId(File::GetUserPath(D_HIRESTEXTURES_IDX), game_id);
+   constexpr auto extensions = std::to_array<std::string_view>({".png", ".dds"});
+ 
+   for (const auto& texture_directory : texture_directories)
+@@ -205,13 +205,9 @@ std::set<std::string> GetTextureDirectoriesWithGameId(const std::string& root_di
+   }
+   else
+   {
+-    // If there's no directory with the region-specific ID, look for a 3-character region-free one
+     const std::string region_free_directory = root_directory + game_id.substr(0, 3);
+-
+     if (File::Exists(region_free_directory))
+-    {
+       result.insert(region_free_directory);
+-    }
+   }
+ 
+   const auto match_gameid_or_all = [game_id](const std::string& filename) {
+@@ -238,3 +234,28 @@ std::set<std::string> GetTextureDirectoriesWithGameId(const std::string& root_di
+ 
+   return result;
+ }
++
++std::vector<std::string> GetHiresTextureDirectoriesWithGameId(const std::string& root_directory,
++                                                              const std::string& game_id)
++{
++  std::vector<std::string> result;
++  const auto append_unique = [&result](const std::string& directory) {
++    if (std::ranges::find(result, directory) == result.end())
++      result.push_back(directory);
++  };
++
++  const std::string region_specific_directory = root_directory + game_id;
++  if (File::Exists(region_specific_directory))
++    append_unique(region_specific_directory);
++
++  // A broad region-free pack fills gaps left by the smaller region-specific
++  // override set. HiresTexture::Update keeps the first file for a texture hash.
++  const std::string region_free_directory = root_directory + game_id.substr(0, 3);
++  if (File::Exists(region_free_directory))
++    append_unique(region_free_directory);
++
++  for (const std::string& directory : GetTextureDirectoriesWithGameId(root_directory, game_id))
++    append_unique(directory);
++
++  return result;
++}
+diff --git a/Source/Core/VideoCommon/HiresTextures.h b/Source/Core/VideoCommon/HiresTextures.h
+index f577aebd78..2ca099ed9c 100644
+--- a/Source/Core/VideoCommon/HiresTextures.h
++++ b/Source/Core/VideoCommon/HiresTextures.h
+@@ -19,6 +19,8 @@ enum class TextureFormat;
+ 
+ std::set<std::string> GetTextureDirectoriesWithGameId(const std::string& root_directory,
+                                                       const std::string& game_id);
++std::vector<std::string> GetHiresTextureDirectoriesWithGameId(const std::string& root_directory,
++                                                              const std::string& game_id);
+ 
+ class HiresTexture
+ {
+diff --git a/Source/Core/VideoCommon/OnScreenUI.cpp b/Source/Core/VideoCommon/OnScreenUI.cpp
+index 451109bbeb..7d7b6d8f96 100644
+--- a/Source/Core/VideoCommon/OnScreenUI.cpp
++++ b/Source/Core/VideoCommon/OnScreenUI.cpp
+@@ -32,6 +32,7 @@
+ #include "VideoCommon/VideoConfig.h"
+ 
+ #include <inttypes.h>
++#include <atomic>
+ #include <mutex>
+ 
+ #include <imgui.h>
+@@ -39,6 +40,17 @@
+ 
+ namespace VideoCommon
+ {
++namespace
++{
++std::atomic<ExternalOverlayDrawCallback> s_external_overlay_draw_callback{
++    nullptr};
++}
++
++void SetExternalOverlayDrawCallback(ExternalOverlayDrawCallback callback)
++{
++  s_external_overlay_draw_callback.store(callback, std::memory_order_release);
++}
++
+ bool OnScreenUI::Initialize(u32 width, u32 height, float scale)
+ {
+   std::unique_lock<std::mutex> imgui_lock(m_imgui_mutex);
+@@ -422,6 +434,11 @@ void OnScreenUI::Finalize()
+   DrawDebugText();
+   OSD::DrawMessages();
+   DrawChallengesAndLeaderboards();
++  if (const auto callback =
++          s_external_overlay_draw_callback.load(std::memory_order_acquire))
++  {
++    callback();
++  }
+   ImGui::Render();
+ 
+   // Check for font changes
+diff --git a/Source/Core/VideoCommon/OnScreenUI.h b/Source/Core/VideoCommon/OnScreenUI.h
+index e9a14e02ba..5ed2eb22d1 100644
+--- a/Source/Core/VideoCommon/OnScreenUI.h
++++ b/Source/Core/VideoCommon/OnScreenUI.h
+@@ -19,6 +19,12 @@ struct ImTextureData;
+ 
+ namespace VideoCommon
+ {
++using ExternalOverlayDrawCallback = void (*)();
++
++// Registers one lightweight overlay drawn on the video thread immediately
++// before ImGui finalizes the frame. Passing nullptr disables it.
++void SetExternalOverlayDrawCallback(ExternalOverlayDrawCallback callback);
++
+ // OnScreenUI handles all the ImGui rendering.
+ class OnScreenUI
+ {
+diff --git a/Source/Core/VideoCommon/Present.cpp b/Source/Core/VideoCommon/Present.cpp
+index 7c62730667..e49259f533 100644
+--- a/Source/Core/VideoCommon/Present.cpp
++++ b/Source/Core/VideoCommon/Present.cpp
+@@ -15,6 +15,7 @@
+ 
+ #include "Present.h"
+ #include "VideoCommon/AbstractGfx.h"
++#include "VideoCommon/ColosseumProjection.h"
+ #include "VideoCommon/FrameDumper.h"
+ #include "VideoCommon/FramebufferManager.h"
+ #include "VideoCommon/OnScreenUI.h"
+@@ -494,7 +495,9 @@ float Presenter::CalculateDrawAspectRatio(bool allow_stretch) const
+     // The actual aspect ratio of the XFB texture is irrelevant, the VI one is the one that matters
+     const auto& vi = Core::System::GetInstance().GetVideoInterface();
+     const float vi_aspect_ratio = vi.GetAspectRatio();
+-    const float source_aspect_ratio = AdjustAspectRatioForCustomCrop(vi_aspect_ratio);
++    const float source_aspect_ratio = GetColosseumPresentationAspect(
++        AdjustAspectRatioForCustomCrop(vi_aspect_ratio),
++        g_ActiveConfig.bWidescreenAuthoredMenu);
+ 
+     // This will scale up the source ~4:3 resolution to its equivalent ~16:9 resolution
+     if (aspect_mode == AspectMode::ForceWide ||
+diff --git a/Source/Core/VideoCommon/ShaderCache.cpp b/Source/Core/VideoCommon/ShaderCache.cpp
+index 565e4f42f8..428ab9d66e 100644
+--- a/Source/Core/VideoCommon/ShaderCache.cpp
++++ b/Source/Core/VideoCommon/ShaderCache.cpp
+@@ -404,11 +404,15 @@ void ShaderCache::ClearCaches()
+   m_texcoord_geometry_shader.reset();
+   m_color_geometry_shader.reset();
+   m_texture_copy_pixel_shader.reset();
++  m_text_sharpen_pixel_shader.reset();
++  m_color_text_sharpen_pixel_shader.reset();
+   m_color_pixel_shader.reset();
+ 
+   m_efb_copy_to_vram_pipelines.clear();
+   m_efb_copy_to_ram_pipelines.clear();
+   m_copy_rgba8_pipeline.reset();
++  m_text_sharpen_rgba8_pipeline.reset();
++  m_color_text_sharpen_rgba8_pipeline.reset();
+   m_rgba8_stereo_copy_pipeline.reset();
+   for (auto& pipeline : m_palette_conversion_pipelines)
+     pipeline.reset();
+@@ -1349,10 +1353,17 @@ bool ShaderCache::CompileSharedPipelines()
+   m_texture_copy_pixel_shader = g_gfx->CreateShaderFromSource(
+       ShaderStage::Pixel, FramebufferShaderGen::GenerateTextureCopyPixelShader(), nullptr,
+       "Texture copy pixel shader");
++  m_text_sharpen_pixel_shader = g_gfx->CreateShaderFromSource(
++      ShaderStage::Pixel, FramebufferShaderGen::GenerateTextSharpenPixelShader(), nullptr,
++      "Colosseum text sharpen pixel shader");
++  m_color_text_sharpen_pixel_shader = g_gfx->CreateShaderFromSource(
++      ShaderStage::Pixel, FramebufferShaderGen::GenerateColorTextSharpenPixelShader(), nullptr,
++      "Colosseum color text sharpen pixel shader");
+   m_color_pixel_shader = g_gfx->CreateShaderFromSource(
+       ShaderStage::Pixel, FramebufferShaderGen::GenerateColorPixelShader(), nullptr,
+       "Color pixel shader");
+-  if (!m_texture_copy_pixel_shader || !m_color_pixel_shader)
++  if (!m_texture_copy_pixel_shader || !m_text_sharpen_pixel_shader ||
++      !m_color_text_sharpen_pixel_shader || !m_color_pixel_shader)
+     return false;
+ 
+   AbstractPipelineConfig config;
+@@ -1369,6 +1380,18 @@ bool ShaderCache::CompileSharedPipelines()
+   if (!m_copy_rgba8_pipeline)
+     return false;
+ 
++  config.pixel_shader = m_text_sharpen_pixel_shader.get();
++  m_text_sharpen_rgba8_pipeline = g_gfx->CreatePipeline(config);
++  if (!m_text_sharpen_rgba8_pipeline)
++    return false;
++
++  config.pixel_shader = m_color_text_sharpen_pixel_shader.get();
++  m_color_text_sharpen_rgba8_pipeline = g_gfx->CreatePipeline(config);
++  if (!m_color_text_sharpen_rgba8_pipeline)
++    return false;
++
++  config.pixel_shader = m_texture_copy_pixel_shader.get();
++
+   if (UseGeometryShaderForEFBCopies())
+   {
+     config.geometry_shader = m_texcoord_geometry_shader.get();
+diff --git a/Source/Core/VideoCommon/ShaderCache.h b/Source/Core/VideoCommon/ShaderCache.h
+index c76f7dac16..f278ed428c 100644
+--- a/Source/Core/VideoCommon/ShaderCache.h
++++ b/Source/Core/VideoCommon/ShaderCache.h
+@@ -88,6 +88,14 @@ public:
+   {
+     return m_texture_copy_pixel_shader.get();
+   }
++  const AbstractShader* GetTextSharpenPixelShader() const
++  {
++    return m_text_sharpen_pixel_shader.get();
++  }
++  const AbstractShader* GetColorTextSharpenPixelShader() const
++  {
++    return m_color_text_sharpen_pixel_shader.get();
++  }
+   const AbstractShader* GetColorGeometryShader() const { return m_color_geometry_shader.get(); }
+   const AbstractShader* GetColorPixelShader() const { return m_color_pixel_shader.get(); }
+ 
+@@ -98,6 +106,14 @@ public:
+ 
+   // RGBA8 framebuffer copy pipelines
+   const AbstractPipeline* GetRGBA8CopyPipeline() const { return m_copy_rgba8_pipeline.get(); }
++  const AbstractPipeline* GetRGBA8TextSharpenPipeline() const
++  {
++    return m_text_sharpen_rgba8_pipeline.get();
++  }
++  const AbstractPipeline* GetRGBA8ColorTextSharpenPipeline() const
++  {
++    return m_color_text_sharpen_rgba8_pipeline.get();
++  }
+   const AbstractPipeline* GetRGBA8StereoCopyPipeline() const
+   {
+     return m_rgba8_stereo_copy_pipeline.get();
+@@ -204,6 +220,8 @@ private:
+   std::unique_ptr<AbstractShader> m_texcoord_geometry_shader;
+   std::unique_ptr<AbstractShader> m_color_geometry_shader;
+   std::unique_ptr<AbstractShader> m_texture_copy_pixel_shader;
++  std::unique_ptr<AbstractShader> m_text_sharpen_pixel_shader;
++  std::unique_ptr<AbstractShader> m_color_text_sharpen_pixel_shader;
+   std::unique_ptr<AbstractShader> m_color_pixel_shader;
+ 
+   // GX Shader Caches
+@@ -239,6 +257,8 @@ private:
+ 
+   // Copy pipeline for RGBA8 textures
+   std::unique_ptr<AbstractPipeline> m_copy_rgba8_pipeline;
++  std::unique_ptr<AbstractPipeline> m_text_sharpen_rgba8_pipeline;
++  std::unique_ptr<AbstractPipeline> m_color_text_sharpen_rgba8_pipeline;
+   std::unique_ptr<AbstractPipeline> m_rgba8_stereo_copy_pipeline;
+ 
+   // Palette conversion pipelines
+diff --git a/Source/Core/VideoCommon/TextureCacheBase.cpp b/Source/Core/VideoCommon/TextureCacheBase.cpp
+index c5d6096391..179d2ab95b 100644
+--- a/Source/Core/VideoCommon/TextureCacheBase.cpp
++++ b/Source/Core/VideoCommon/TextureCacheBase.cpp
+@@ -4,6 +4,7 @@
+ #include "VideoCommon/TextureCacheBase.h"
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <chrono>
+ #include <cmath>
+ #include <cstring>
+@@ -40,6 +41,7 @@
+ #include "VideoCommon/Assets/CustomTextureData.h"
+ #include "VideoCommon/Assets/TextureAssetUtils.h"
+ #include "VideoCommon/BPMemory.h"
++#include "VideoCommon/ColosseumTextUpscale.h"
+ #include "VideoCommon/FramebufferManager.h"
+ #include "VideoCommon/GraphicsModSystem/Runtime/FBInfo.h"
+ #include "VideoCommon/GraphicsModSystem/Runtime/GraphicsModActionData.h"
+@@ -67,6 +69,31 @@ static int xfb_count = 0;
+ 
+ std::unique_ptr<TextureCacheBase> g_texture_cache;
+ 
++namespace
++{
++std::atomic_bool s_colosseum_text_upscale_enabled{false};
++std::atomic<u64> s_colosseum_text_upscale_count{0};
++
++}  // namespace
++
++bool IsColosseumTextUpscaleEnabled()
++{
++  return s_colosseum_text_upscale_enabled.load(std::memory_order_relaxed);
++}
++
++void SetColosseumTextUpscaleEnabled(bool enabled)
++{
++  const bool previous =
++      s_colosseum_text_upscale_enabled.exchange(enabled, std::memory_order_relaxed);
++  if (enabled && !previous)
++    s_colosseum_text_upscale_count.store(0, std::memory_order_relaxed);
++}
++
++u64 GetColosseumTextUpscaleCount()
++{
++  return s_colosseum_text_upscale_count.load(std::memory_order_relaxed);
++}
++
+ TCacheEntry::TCacheEntry(std::unique_ptr<AbstractTexture> tex,
+                          std::unique_ptr<AbstractFramebuffer> fb)
+     : texture(std::move(tex)), framebuffer(std::move(fb))
+@@ -386,7 +413,8 @@ RcTcacheEntry TextureCacheBase::ReinterpretEntry(const RcTcacheEntry& existing_e
+   return reinterpreted_entry;
+ }
+ 
+-void TextureCacheBase::ScaleTextureCacheEntryTo(RcTcacheEntry& entry, u32 new_width, u32 new_height)
++void TextureCacheBase::ScaleTextureCacheEntryTo(RcTcacheEntry& entry, u32 new_width, u32 new_height,
++                                                bool sharpen_text, bool preserve_text_color)
+ {
+   if (entry->GetWidth() == new_width && entry->GetHeight() == new_height)
+   {
+@@ -411,8 +439,18 @@ void TextureCacheBase::ScaleTextureCacheEntryTo(RcTcacheEntry& entry, u32 new_wi
+   }
+ 
+   // No need to convert the coordinates here since they'll be the same.
+-  g_gfx->ScaleTexture(new_texture->framebuffer.get(), new_texture->texture->GetConfig().GetRect(),
+-                      entry->texture.get(), entry->texture->GetConfig().GetRect());
++  if (sharpen_text)
++  {
++    g_gfx->SharpenAndScaleTextTexture(new_texture->framebuffer.get(),
++                                      new_texture->texture->GetConfig().GetRect(),
++                                      entry->texture.get(), entry->texture->GetConfig().GetRect(),
++                                      preserve_text_color);
++  }
++  else
++  {
++    g_gfx->ScaleTexture(new_texture->framebuffer.get(), new_texture->texture->GetConfig().GetRect(),
++                        entry->texture.get(), entry->texture->GetConfig().GetRect());
++  }
+   entry->texture.swap(new_texture->texture);
+   entry->framebuffer.swap(new_texture->framebuffer);
+ 
+@@ -1653,6 +1691,11 @@ RcTcacheEntry TextureCacheBase::CreateTextureEntry(
+     const u32 width = texture_info.GetRawWidth();
+     const u32 height = texture_info.GetRawHeight();
+ 
++    const ColosseumTextUpscale::Plan text_upscale_plan = ColosseumTextUpscale::GetPlan(
++        IsColosseumTextUpscaleEnabled(), texture_info.GetTextureFormat() == TextureFormat::I4,
++        texture_info.GetTextureFormat() == TextureFormat::RGB5A3, width, height,
++        texture_info.GetLevelCount(), creation_info.full_hash);
++    const bool upscale_text = text_upscale_plan.enabled;
+     const TextureConfig config(width, height, texLevels, 1, 1, AbstractTextureFormat::RGBA8, 0,
+                                AbstractTextureType::Texture_2DArray);
+     entry = AllocateCacheEntry(config);
+@@ -1759,7 +1802,8 @@ RcTcacheEntry TextureCacheBase::CreateTextureEntry(
+ 
+     entry->has_arbitrary_mips = arbitrary_mip_detector.HasArbitraryMipmaps(dst_buffer);
+ 
+-    if (g_ActiveConfig.bDumpTextures && !skip_texture_dump && texLevels > 0)
++    if (g_ActiveConfig.bDumpTextures && !skip_texture_dump && !upscale_text &&
++        texLevels > 0)
+     {
+       const std::string basename = texture_info.CalculateTextureName().GetFullName();
+       if (g_ActiveConfig.bDumpBaseTextures)
+@@ -1774,6 +1818,18 @@ RcTcacheEntry TextureCacheBase::CreateTextureEntry(
+         }
+       }
+     }
++
++    if (upscale_text)
++    {
++      // Keep text uploads native-sized, then reconstruct them once on the GPU. Dynamic glyph
++      // surfaces avoid typewriter-animation hash churn, while the exact battle HUD atlas uses
++      // a color-preserving coverage pass for its Lv/HP/EXP labels.
++      ScaleTextureCacheEntryTo(
++          entry, text_upscale_plan.width, text_upscale_plan.height, true,
++          text_upscale_plan.filter == ColosseumTextUpscale::Filter::ColorCoverage);
++      s_colosseum_text_upscale_count.fetch_add(1, std::memory_order_relaxed);
++    }
++    entry->is_custom_tex = upscale_text;
+   }
+ 
+   const auto iter = m_textures_by_address.emplace(texture_info.GetRawAddress(), entry);
+diff --git a/Source/Core/VideoCommon/TextureCacheBase.h b/Source/Core/VideoCommon/TextureCacheBase.h
+index d596f84e5e..b6f7c70080 100644
+--- a/Source/Core/VideoCommon/TextureCacheBase.h
++++ b/Source/Core/VideoCommon/TextureCacheBase.h
+@@ -49,6 +49,10 @@ constexpr std::string_view XFB_DUMP_PREFIX = "xfb1";
+ 
+ static constexpr int FRAMECOUNT_INVALID = 0;
+ 
++bool IsColosseumTextUpscaleEnabled();
++void SetColosseumTextUpscaleEnabled(bool enabled);
++u64 GetColosseumTextUpscaleCount();
++
+ struct TextureAndTLUTFormat
+ {
+   TextureAndTLUTFormat(TextureFormat texfmt_ = TextureFormat::I4,
+@@ -292,7 +296,8 @@ public:
+                                  bool clamp_bottom,
+                                  const CopyFilterCoefficients::Values& filter_coefficients);
+ 
+-  void ScaleTextureCacheEntryTo(RcTcacheEntry& entry, u32 new_width, u32 new_height);
++  void ScaleTextureCacheEntryTo(RcTcacheEntry& entry, u32 new_width, u32 new_height,
++                                bool sharpen_text = false, bool preserve_text_color = false);
+ 
+   // Flushes all pending EFB copies to emulated RAM.
+   void FlushEFBCopies();
+diff --git a/Source/Core/VideoCommon/VertexShaderManager.cpp b/Source/Core/VideoCommon/VertexShaderManager.cpp
+index 6d69803827..6a0bbd762d 100644
+--- a/Source/Core/VideoCommon/VertexShaderManager.cpp
++++ b/Source/Core/VideoCommon/VertexShaderManager.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include "VideoCommon/VertexShaderManager.h"
+ 
++#include <algorithm>
+ #include <array>
+ #include <cmath>
+ #include <cstring>
+@@ -14,6 +15,7 @@
+ #include "Common/Matrix.h"
+ #include "VideoCommon/BPFunctions.h"
+ #include "VideoCommon/BPMemory.h"
++#include "VideoCommon/ColosseumProjection.h"
+ #include "VideoCommon/CPMemory.h"
+ #include "VideoCommon/FramebufferManager.h"
+ #include "VideoCommon/FreeLookCamera.h"
+@@ -49,9 +51,52 @@ Common::Matrix44 VertexShaderManager::LoadProjectionMatrix()
+     const Common::Vec2 fov_multiplier = g_freelook_camera.IsActive() ?
+                                             g_freelook_camera.GetFieldOfViewMultiplier() :
+                                             Common::Vec2{1, 1};
+-    m_projection_matrix[0] = rawProjection[0] * g_ActiveConfig.fAspectRatioHackW * fov_multiplier.x;
++    // Colosseum can retain a cached 16:9 projection after loading a state or
++    // changing output modes even though its game-side aspect constant has
++    // already been updated. Correct only projections that still describe a
++    // roughly 16:9 frustum; projections rebuilt by the game for the native
++    // target aspect pass through unchanged. This preserves the original
++    // vertical framing and character size while revealing more world
++    // horizontally (Hor+).
++    const float raw_aspect =
++        rawProjection[0] != 0.0f ? std::abs(rawProjection[2] / rawProjection[0]) : 0.0f;
++    const bool is_cached_widescreen_projection =
++        raw_aspect >= 1.6f && raw_aspect <= 2.0f;
++    const bool square_offscreen_viewport =
++        g_ActiveConfig.bWidescreenHudSafeArea &&
++        VideoCommon::IsColosseumSquareOffscreenViewport(xfmem.viewport.wd,
++                                                        xfmem.viewport.ht);
++    const float authored_projection_scale =
++        std::clamp(g_ActiveConfig.fWidescreenHudSafeAreaScale, 0.25f, 1.0f);
++    // Colosseum renders its character and world shadows through a square
++    // offscreen viewport. That buffer is authored square and is sampled back
++    // through a projector, so its frustum has nothing to do with the output
++    // aspect: it must pass through untouched. Scaling it by the inverse safe
++    // area (which is what this branch used to do) stretched every shadow
++    // horizontally by 1/scale - 2x at 32:9 - and amplified the shadow camera's
++    // own per-draw aspect drift by the same factor, which read on screen as
++    // shadows swinging back and forth on a completely static scene.
++    constexpr float offscreen_projection_scale = 1.0f;
++    const float authored_menu_scale = std::max(
++        VideoCommon::GetColosseumAuthoredMenuHorizontalScale(
++            raw_aspect, g_ActiveConfig.bWidescreenAuthoredMenu),
++        g_ActiveConfig.bWidescreenAuthoredMenu ?
++            VideoCommon::COLOSSEUM_AUTHORED_MENU_MINIMUM_SCALE :
++            1.0f);
++    const float naming_scale = VideoCommon::GetColosseumNamingHorizontalScale(
++        g_ActiveConfig.bColosseumNamingPresentation);
++    const float native_hor_plus_scale =
++        g_ActiveConfig.bColosseumNamingPresentation ? naming_scale :
++        g_ActiveConfig.bWidescreenAuthoredMenu ? authored_menu_scale :
++        square_offscreen_viewport ? offscreen_projection_scale :
++        g_ActiveConfig.bWidescreenHudSafeArea && is_cached_widescreen_projection ?
++            authored_projection_scale :
++            1.0f;
++    const float horizontal_scale =
++        g_ActiveConfig.fAspectRatioHackW * fov_multiplier.x * native_hor_plus_scale;
++    m_projection_matrix[0] = rawProjection[0] * horizontal_scale;
+     m_projection_matrix[1] = 0.0f;
+-    m_projection_matrix[2] = rawProjection[1] * g_ActiveConfig.fAspectRatioHackW * fov_multiplier.x;
++    m_projection_matrix[2] = rawProjection[1] * horizontal_scale;
+     m_projection_matrix[3] = 0.0f;
+ 
+     m_projection_matrix[4] = 0.0f;
+@@ -76,10 +121,19 @@ Common::Matrix44 VertexShaderManager::LoadProjectionMatrix()
+ 
+   case ProjectionType::Orthographic:
+   {
+-    m_projection_matrix[0] = rawProjection[0];
++    // Colosseum composites the perspective world and its 2D overlays through
++    // the same orthographic full-screen quad. Scaling this projection shrinks
++    // the whole camera and exposes stale EFB regions, so preserve it verbatim.
++    // Complete menu canvases are handled by the presenter instead. The naming
++    // screen is the one exception: its confirmation panels were authored out
++    // to x=660 for a 602-pixel VI aperture, so center the complete 640-pixel
++    // composition with the matching 602/640 horizontal scale.
++    const float naming_scale = VideoCommon::GetColosseumNamingHorizontalScale(
++        g_ActiveConfig.bColosseumNamingPresentation);
++    m_projection_matrix[0] = rawProjection[0] * naming_scale;
+     m_projection_matrix[1] = 0.0f;
+     m_projection_matrix[2] = 0.0f;
+-    m_projection_matrix[3] = rawProjection[1];
++    m_projection_matrix[3] = rawProjection[1] * naming_scale;
+ 
+     m_projection_matrix[4] = 0.0f;
+     m_projection_matrix[5] = rawProjection[2];
+diff --git a/Source/Core/VideoCommon/VideoConfig.cpp b/Source/Core/VideoCommon/VideoConfig.cpp
+index a6193853f6..15488c8951 100644
+--- a/Source/Core/VideoCommon/VideoConfig.cpp
++++ b/Source/Core/VideoCommon/VideoConfig.cpp
+@@ -25,6 +25,7 @@
+ #include "VideoCommon/Fifo.h"
+ #include "VideoCommon/FramebufferManager.h"
+ #include "VideoCommon/FreeLookCamera.h"
++#include "VideoCommon/GeometryShaderManager.h"
+ #include "VideoCommon/GraphicsModSystem/Runtime/GraphicsModManager.h"
+ #include "VideoCommon/OnScreenDisplay.h"
+ #include "VideoCommon/PixelShaderManager.h"
+@@ -32,6 +33,7 @@
+ #include "VideoCommon/TextureCacheBase.h"
+ #include "VideoCommon/VertexManagerBase.h"
+ #include "VideoCommon/XFMemory.h"
++#include "VideoCommon/XFStateManager.h"
+ 
+ VideoConfig g_Config;
+ VideoConfig g_ActiveConfig;
+@@ -86,6 +88,14 @@ void VideoConfig::Refresh()
+   iUsePresentDrawable = Config::Get(Config::GFX_MTL_USE_PRESENT_DRAWABLE);
+ 
+   bWidescreenHack = Config::Get(Config::GFX_WIDESCREEN_HACK);
++  bWidescreenHudSafeArea =
++      Config::Get(Config::GFX_WIDESCREEN_HUD_SAFE_AREA);
++  fWidescreenHudSafeAreaScale =
++      Config::Get(Config::GFX_WIDESCREEN_HUD_SAFE_AREA_SCALE);
++  bWidescreenAuthoredMenu =
++      Config::Get(Config::GFX_WIDESCREEN_AUTHORED_MENU);
++  bColosseumNamingPresentation =
++      Config::Get(Config::GFX_COLOSSEUM_NAMING_PRESENTATION);
+   aspect_mode = Config::Get(Config::GFX_ASPECT_RATIO);
+   custom_aspect_width = Config::Get(Config::GFX_CUSTOM_ASPECT_RATIO_WIDTH);
+   custom_aspect_height = Config::Get(Config::GFX_CUSTOM_ASPECT_RATIO_HEIGHT);
+@@ -307,6 +317,13 @@ void CheckForConfigChanges()
+   const AspectMode old_aspect_mode = g_ActiveConfig.aspect_mode;
+   const AspectMode old_suggested_aspect_mode = g_ActiveConfig.suggested_aspect_mode;
+   const bool old_widescreen_hack = g_ActiveConfig.bWidescreenHack;
++  const bool old_widescreen_hud_safe_area = g_ActiveConfig.bWidescreenHudSafeArea;
++  const float old_widescreen_hud_safe_area_scale =
++      g_ActiveConfig.fWidescreenHudSafeAreaScale;
++  const bool old_widescreen_authored_menu =
++      g_ActiveConfig.bWidescreenAuthoredMenu;
++  const bool old_colosseum_naming_presentation =
++      g_ActiveConfig.bColosseumNamingPresentation;
+   const auto old_post_processing_shader = g_ActiveConfig.sPostProcessingShader;
+   const auto old_hdr = g_ActiveConfig.bHDR;
+ 
+@@ -359,6 +376,14 @@ void CheckForConfigChanges()
+     changed_bits |= CONFIG_CHANGE_BIT_ASPECT_RATIO;
+   if (old_widescreen_hack != g_ActiveConfig.bWidescreenHack)
+     changed_bits |= CONFIG_CHANGE_BIT_ASPECT_RATIO;
++  const bool widescreen_hud_safe_area_changed =
++      old_widescreen_hud_safe_area != g_ActiveConfig.bWidescreenHudSafeArea ||
++      old_widescreen_hud_safe_area_scale != g_ActiveConfig.fWidescreenHudSafeAreaScale ||
++      old_widescreen_authored_menu != g_ActiveConfig.bWidescreenAuthoredMenu ||
++      old_colosseum_naming_presentation !=
++          g_ActiveConfig.bColosseumNamingPresentation;
++  if (widescreen_hud_safe_area_changed)
++    changed_bits |= CONFIG_CHANGE_BIT_ASPECT_RATIO;
+   if (old_post_processing_shader != g_ActiveConfig.sPostProcessingShader)
+     changed_bits |= CONFIG_CHANGE_BIT_POST_PROCESSING_SHADER;
+   if (old_hdr != g_ActiveConfig.bHDR)
+@@ -384,6 +409,13 @@ void CheckForConfigChanges()
+     pixel_shader_manager.Dirty();
+   }
+ 
++  if (widescreen_hud_safe_area_changed)
++  {
++    auto& system = Core::System::GetInstance();
++    system.GetXFStateManager().SetProjectionChanged();
++    system.GetGeometryShaderManager().SetProjectionChanged();
++  }
++
+   // Reload shaders if host config has changed.
+   if (changed_bits & (CONFIG_CHANGE_BIT_HOST_CONFIG | CONFIG_CHANGE_BIT_MULTISAMPLES))
+   {
+diff --git a/Source/Core/VideoCommon/VideoConfig.h b/Source/Core/VideoCommon/VideoConfig.h
+index ec06f4a606..c4368f223a 100644
+--- a/Source/Core/VideoCommon/VideoConfig.h
++++ b/Source/Core/VideoCommon/VideoConfig.h
+@@ -198,6 +198,10 @@ struct VideoConfig final
+   bool bVSync = false;
+   bool bVSyncActive = false;
+   bool bWidescreenHack = false;
++  bool bWidescreenHudSafeArea = false;
++  float fWidescreenHudSafeAreaScale = 1.0f;
++  bool bWidescreenAuthoredMenu = false;
++  bool bColosseumNamingPresentation = false;
+   AspectMode aspect_mode{};
+   int custom_aspect_width = 1;
+   int custom_aspect_height = 1;
+diff --git a/module-template/CMakeLists.txt b/module-template/CMakeLists.txt
+index 3b00450722..a858b86794 100644
+--- a/module-template/CMakeLists.txt
++++ b/module-template/CMakeLists.txt
+@@ -88,6 +88,7 @@ add_library(${MODULE_NAME} SHARED
+   module_export.c
+   "${MODULE_TABLES}"
+   "${GXRUNTIME_DIR}/src/core/cpu.c"
++  "${GXRUNTIME_DIR}/src/core/native_sdk.c"
+   "${GXRUNTIME_DIR}/src/core/cpu_exception.c"
+   "${GXRUNTIME_DIR}/src/core/cpu_interpreter.c"
+   "${GXRUNTIME_DIR}/src/core/cpu_interpreter_table.c"
+@@ -113,6 +114,23 @@ target_include_directories(${MODULE_NAME} PRIVATE
+ if(NOT WIN32)
+   target_link_libraries(${MODULE_NAME} PRIVATE m)
+ endif()
++
++# DOLRECOMP_LLVM_PGO=gen makes the llvm backend emit LLVM InstrProf counters
++# into the generated objects, and those need the profiling runtime. The module
++# links -nostdlib -nostartfiles, so nothing pulls it in and the link fails with
++# undefined __llvm_profile_instrument_target / __llvm_profile_runtime - which
++# is why the PGO path could not be run end to end before. Pass the runtime that
++# matches the clang whose LLVM did the instrumenting; a mismatched one is worse
++# than none, so this is explicit rather than searched for.
++set(RECOMPCORE_MODULE_PROFILE_RUNTIME "" CACHE FILEPATH
++    "clang_rt.profile library to link when building an instrumented (PGO gen) module")
++if(RECOMPCORE_MODULE_PROFILE_RUNTIME)
++  if(NOT EXISTS "${RECOMPCORE_MODULE_PROFILE_RUNTIME}")
++    message(FATAL_ERROR
++      "RECOMPCORE_MODULE_PROFILE_RUNTIME does not exist: ${RECOMPCORE_MODULE_PROFILE_RUNTIME}")
++  endif()
++  target_link_libraries(${MODULE_NAME} PRIVATE "${RECOMPCORE_MODULE_PROFILE_RUNTIME}")
++endif()
+ if(UNIX AND NOT APPLE)
+   target_link_options(${MODULE_NAME} PRIVATE
+     "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/module.exports")
+@@ -120,6 +138,27 @@ if(UNIX AND NOT APPLE)
+     "${CMAKE_CURRENT_SOURCE_DIR}/module.exports")
+ endif()
+ 
++# Extra target flags for the generated translation units, e.g. "-mfma".
++#
++# Empty by default, because it trades portability for speed and that is the
++# builder's call, not ours. It matters for native substitutions: those call
++# fmaf() to reproduce the Gekko's fused ps_madds exactly, and on a baseline
++# x86-64 target - which predates FMA3 - fmaf is not an instruction but a libm
++# call computing the fused result in software. PSMTXConcat alone ran 4.5M times
++# in one traced scene at twelve fmaf each, so the difference is not marginal.
++#
++# -mfma does not weaken the float contract: -ffp-contract=off still stops the
++# compiler fusing anything we did not write as fmaf. It does require FMA3
++# hardware (Haswell/Piledriver onward); a module built with it will fault with
++# an illegal instruction on older CPUs.
++set(RECOMPCORE_MODULE_ARCH_FLAGS "" CACHE STRING
++    "Extra architecture flags for generated module translation units (e.g. -mfma)")
++# Arrives as one space-separated string from moderngekko-port's --arch-flags, so
++# split it: passed through whole, "-mfma -mavx2" would reach the compiler as a
++# single unrecognised argument.
++separate_arguments(RECOMPCORE_MODULE_ARCH_FLAGS_LIST NATIVE_COMMAND
++                   "${RECOMPCORE_MODULE_ARCH_FLAGS}")
++
+ option(RECOMPCORE_MODULE_ENABLE_IPO "Enable Clang module interprocedural optimization when supported" ON)
+ set(RECOMPCORE_MODULE_OPT_LEVEL "2" CACHE STRING
+     "Optimization level for generated module translation units (0, 1, 2, or 3)")
+@@ -161,8 +200,10 @@ if(MSVC)
+   endif()
+ elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+   target_compile_options(${MODULE_NAME} PRIVATE
+-    -O${RECOMPCORE_MODULE_OPT_LEVEL} -ffp-contract=off -fno-fast-math)
++    -O${RECOMPCORE_MODULE_OPT_LEVEL} -ffp-contract=off -fno-fast-math
++    ${RECOMPCORE_MODULE_ARCH_FLAGS_LIST})
+ elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+   target_compile_options(${MODULE_NAME} PRIVATE
+-    -O${RECOMPCORE_MODULE_OPT_LEVEL} -ffp-contract=off -fno-fast-math)
++    -O${RECOMPCORE_MODULE_OPT_LEVEL} -ffp-contract=off -fno-fast-math
++    ${RECOMPCORE_MODULE_ARCH_FLAGS_LIST})
+ endif()

@@ -1,0 +1,9 @@
+guest,symbol,note
+800A2D98,dolrecomp_native_psmtx_concat,PSMTXConcat - 6.1M calls in one traced scene
+800A2D64,dolrecomp_native_psmtx_copy,PSMTXCopy
+800A2D38,dolrecomp_native_psmtx_identity,PSMTXIdentity
+800A37CC,dolrecomp_native_psmtx_mult_vec,PSMTXMultVec
+800054F4,dolrecomp_native_memcpy,memcpy - 3.1M calls; most are through the L1 locked cache
+8000540C,dolrecomp_native_memset,memset
+801A85F0,dolrecomp_native_hsd_mtx_scaled_add,HSD_MtxScaledAdd
+8009B2D0,dolrecomp_native_dcflushrange,DCFlushRange - ~50% of guest CPU in battle-mid by PC sampling; batches the per-line icache invalidation into one range call

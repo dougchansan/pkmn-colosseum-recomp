@@ -121,10 +121,14 @@ if (-not $RecompCoreSource) {
 }
 $recompCore = Resolve-Repository -Path $RecompCoreSource
 
+# DolRecomp is a submodule of RecompCore and carries the codegen changes.
+$dolRecomp = Join-Path $modernGekko $manifest.dolRecomp.relativePath
 Test-CompatibleBase -Repository $recompCore -BaseCommit $manifest.recompCore.baseCommit -Component 'RecompCore'
+Test-CompatibleBase -Repository $dolRecomp -BaseCommit $manifest.dolRecomp.baseCommit -Component 'DolRecomp'
 Test-CompatibleBase -Repository $modernGekko -BaseCommit $manifest.modernGekko.baseCommit -Component 'ModernGekko'
 
-Invoke-Patch -Repository $recompCore -PatchPath (Join-Path $bundleRoot $manifest.recompCore.patch) -ExpectedSha256 $manifest.recompCore.sha256 -Component 'RecompCore'
+Invoke-Patch -Repository $dolRecomp -PatchPath (Join-Path $bundleRoot $manifest.dolRecomp.patch) -ExpectedSha256 $manifest.dolRecomp.sha256 -Component 'DolRecomp'
+Invoke-Patch -Repository $recompCore -PatchPath (Join-Path $bundleRoot $manifest.recompCore.patch) -ExpectedSha256 $manifest.recompCore.sha256 -Component 'RecompCore' -IgnoreSubmodules
 Invoke-Patch -Repository $modernGekko -PatchPath (Join-Path $bundleRoot $manifest.modernGekko.patch) -ExpectedSha256 $manifest.modernGekko.sha256 -Component 'ModernGekko' -IgnoreSubmodules
 
 if ($CheckOnly) {

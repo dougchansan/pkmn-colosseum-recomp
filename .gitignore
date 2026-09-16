@@ -68,9 +68,17 @@ Thumbs.db
 # Local build artifacts
 /.omx/
 **/__pycache__/
+**/.pytest_cache/
 *.pyc
 *.obj
 /b3/
 /b60/
 /mbench/
 /mbench_auto*/
+
+# Benchmark savestates. ~1.5 GB of runtime snapshots; regenerate locally rather
+# than tracking them.
+/states/
+
+# build transcripts from the toolchain/module scripts
+build-*.log

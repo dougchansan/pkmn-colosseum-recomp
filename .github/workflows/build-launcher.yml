@@ -1,0 +1,220 @@
+name: Build launcher artifacts
+
+# Builds the ModernGekko launcher, runner and optional mod packages for
+# Windows, Linux and macOS.
+#
+# These artifacts contain NO game data and NO game-derived recomp module.
+# Producing a module requires the user's own legally obtained GC6E01 disc
+# image, which CI does not have and must never have. Users still run the
+# platform setup script locally to generate their own module.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Runners to build on. macOS bills at 10x and Windows at 2x private-repo minutes, so debug on linux first.'
+        type: choice
+        default: linux
+        options: [linux, all, windows, macos]
+  pull_request:
+    paths:
+      - '.github/workflows/build-launcher.yml'
+      - 'mods/**'
+      - 'scripts/**'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  # Selecting the matrix here keeps a debug cycle to one cheap Linux runner.
+  # A full three-platform run costs ~585 billed minutes on a private repo.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          # dispatch -> caller's choice; PR -> linux only (cheap); tag -> all three.
+          sel="${{ github.event_name == 'workflow_dispatch' && inputs.platforms || github.event_name == 'pull_request' && 'linux' || 'all' }}"
+          linux='{"os":"ubuntu-latest","label":"linux-x86_64","modlib":"mod.so","exe":""}'
+          win='{"os":"windows-latest","label":"win64","modlib":"mod.dll","exe":".exe"}'
+          mac='{"os":"macos-latest","label":"macos-arm64","modlib":"mod.dylib","exe":""}'
+          case "$sel" in
+            linux)   inc="[$linux]" ;;
+            windows) inc="[$win]" ;;
+            macos)   inc="[$mac]" ;;
+            *)       inc="[$linux,$win,$mac]" ;;
+          esac
+          echo "selected: $sel"
+          echo "matrix={\"include\":$inc}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build cmake clang python3 \
+            libevdev-dev libudev-dev libsystemd-dev \
+            libxi-dev libxrandr-dev libxkbcommon-dev \
+            libgl1-mesa-dev libegl-dev libasound2-dev libpulse-dev \
+            libbluetooth-dev libcurl4-openssl-dev libusb-1.0-0-dev \
+            libgtk-3-dev
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Install Windows build dependencies
+        if: runner.os == 'Windows'
+        run: choco install ninja --no-progress -y
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Apply host patches
+        shell: bash
+        run: sh mods/host-patches/apply-host-patches.sh "$GITHUB_WORKSPACE/lib/ModernGekko"
+
+      # __FILE__ would otherwise embed the absolute build path into every
+      # binary. On a runner that is only /home/runner/work/..., but keeping
+      # the trim here means a local build of this same workflow does not leak
+      # a developer's username either.
+      - name: Compute path-trimming flags
+        id: trim
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "cflags=/d1trimfile:$(cygpath -w "$GITHUB_WORKSPACE")\\" >> "$GITHUB_OUTPUT"
+          else
+            echo "cflags=-ffile-prefix-map=$GITHUB_WORKSPACE=." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure ModernGekko
+        shell: bash
+        run: |
+          cmake -S lib/ModernGekko -B lib/ModernGekko/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DCMAKE_C_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            -DCMAKE_CXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            -DCMAKE_OBJC_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            -DCMAKE_OBJCXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            '-DMODERNGEKKO_FRONTEND_NAME=Pokemon Colosseum Recomp' \
+            -DMODERNGEKKO_LAUNCHER_OUTPUT_NAME=PokemonColosseumRecomp \
+            -DMODERNGEKKO_RUNNER_OUTPUT_NAME=moderngekko-run \
+            -DMODERNGEKKO_USER_DIRECTORY_NAME=PokemonColosseumRecomp \
+            -DMODERNGEKKO_REQUIRED_DISC_ID=GC6E01 \
+            '-DMODERNGEKKO_DEFAULT_WINDOW_TITLE=Pokemon Colosseum Recomp' \
+            -DMODERNGEKKO_LOG_FILENAME=PokemonColosseumRecomp.log \
+            "-DMODERNGEKKO_DOL_PATCH_MANIFEST=$GITHUB_WORKSPACE/patches/GC6E01-native-widescreen.csv" \
+            -DMODERNGEKKO_PORTABLE_DEFAULT_GAME=ON \
+            -DMODERNGEKKO_PORTABLE_USER_DIRECTORY=ON \
+            -DMODERNGEKKO_GAMECUBE_CONTROLLERS=ON \
+            '-DMODERNGEKKO_NATIVE_ULTRAWIDE_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-ultrawide.mgm' \
+            '-DMODERNGEKKO_TEXT_UPSCALE_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-hd-text.mgm' \
+            '-DMODERNGEKKO_MINIMAP_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-minimap.mgm'
+
+      - name: Build launcher, runner and port tool
+        run: >
+          cmake --build lib/ModernGekko/build --parallel 4
+          --target moderngekko-launcher moderngekko-run moderngekko-port
+
+      - name: Build optional mod packages
+        shell: bash
+        run: |
+          cmake -S mods -B build/mods -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            -DCMAKE_CXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            -DCMAKE_OBJC_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            -DCMAKE_OBJCXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            "-DMODERNGEKKO_SOURCE_DIR=$GITHUB_WORKSPACE/lib/ModernGekko"
+          cmake --build build/mods --parallel 4
+
+      - name: Assemble package
+        shell: bash
+        run: |
+          set -eu
+          MG=lib/ModernGekko/build
+          DEST=build/artifact/PokemonColosseumRecomp
+          mkdir -p "$DEST"
+
+          cp "$MG/PokemonColosseumRecomp${{ matrix.exe }}" "$DEST/"
+          cp "$MG/moderngekko-run${{ matrix.exe }}" "$DEST/"
+          cp -R "$MG/Sys" "$DEST/"
+          cp -R "$MG/patches" "$DEST/"
+          cp LICENSE THIRD_PARTY_NOTICES.md VERSION "$DEST/"
+
+          # Optional mods, each carrying the canonical host-patch payload so a
+          # generated package can never ship stale renderer patches.
+          mkdir -p "$DEST/Mods/Optional"
+          for pkg in build/mods/packages/*.mgm; do
+            name=$(basename "$pkg")
+            mkdir -p "$DEST/Mods/Optional/$name"
+            cp "$pkg/${{ matrix.modlib }}" "$DEST/Mods/Optional/$name/"
+            cp -R mods/host-patches "$DEST/Mods/Optional/$name/"
+          done
+
+          # Project HD text textures only. The community HD pack is a separate
+          # ~690 MB download and is deliberately not bundled.
+          # Optional: the textures are not committed on every branch, and an
+          # artifact without them is still a valid launcher.
+          mkdir -p "$DEST/User/Load/Textures"
+          if [ -d assets/hd-textures/GC6E01 ]; then
+            cp -R assets/hd-textures/GC6E01 "$DEST/User/Load/Textures/"
+            echo "bundled $(find assets/hd-textures/GC6E01 -type f | wc -l) HD text textures"
+          else
+            echo "::notice::assets/hd-textures/GC6E01 absent on this ref; artifact ships without HD text textures"
+          fi
+
+          # Empty runtime scaffolding; no savestates, memory cards or configs.
+          mkdir -p "$DEST/User/Config" "$DEST/User/GameSettings" \
+                   "$DEST/User/StateSaves" "$DEST/User/GC" "$DEST/User/Dump" \
+                   "$DEST/User/Logs" "$DEST/User/ResourcePacks" "$DEST/User/Wii"
+
+      - name: Verify package carries no personal data
+        shell: bash
+        run: |
+          set -eu
+          DEST=build/artifact/PokemonColosseumRecomp
+          fail=0
+          # Savestates, memory cards, dev harness and the local game pointer
+          # must never reach an artifact.
+          if find "$DEST" \( -name '*.sav' -o -name '*.gci' -o -name 'SRAM.raw' \
+               -o -name 'default-game.txt' -o -name '*recomp*.dll' \) | grep -q .; then
+            echo "::error::package contains excluded runtime or game-derived files"
+            fail=1
+          fi
+          if grep -rl 'runneradmin\|/Users/runner/work' "$DEST" 2>/dev/null | grep -q .; then
+            echo "::error::package embeds absolute runner paths"
+            fail=1
+          fi
+          exit $fail
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokemonColosseumRecomp-${{ matrix.label }}
+          path: build/artifact/PokemonColosseumRecomp
+          if-no-files-found: error
