@@ -22,7 +22,9 @@ Public License, version 3 or (at your option) any later version. See `LICENSE`.
 - [RecompCore](https://github.com/ExpansionPak/RecompCore) states that most
   original Dolphin source is GPL-2.0-or-later and that the repository as a
   whole is GPLv3-compatible. Per-file SPDX identifiers and the upstream
-  `LICENSES` directory specify additional licenses.
+  `LICENSES` directory specify additional licenses. Binary artifacts include
+  copies of these licenses and notice files from vendored dependencies under
+  `licenses/`.
 
 The setup scripts identify the upstream revisions used by this release and
 apply the game-specific host patches. When distributing object code, provide

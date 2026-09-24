@@ -245,6 +245,10 @@ function Install-Package([string]$destination, [switch]$DeveloperInstall) {
             -Destination (Join-Path $licenses 'Dolphin') -Force
         Copy-Item -LiteralPath (Join-Path $dolphinRoot 'LICENSES') `
             -Destination (Join-Path $licenses 'Dolphin') -Recurse -Force
+        python (Join-Path $PSScriptRoot 'collect-third-party-notices.py') `
+            (Join-Path $dolphinRoot 'Externals') `
+            (Join-Path $licenses 'Dolphin\Externals')
+        if ($LASTEXITCODE -ne 0) { throw 'Third-party notice collection failed.' }
         @((& git -C $projectRoot rev-parse HEAD),
             (& git -C $projectRoot submodule status --recursive)) |
             Set-Content -LiteralPath (Join-Path $destination 'SOURCE_REVISIONS.txt') -Encoding ascii

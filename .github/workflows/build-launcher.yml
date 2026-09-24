@@ -186,6 +186,13 @@ jobs:
           cp lib/DolRecomp/LICENSE "$DEST/licenses/DolRecomp/"
           cp lib/ModernGekko/vendor/dolphin/COPYING "$DEST/licenses/Dolphin/"
           cp -R lib/ModernGekko/vendor/dolphin/LICENSES "$DEST/licenses/Dolphin/"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            python scripts/collect-third-party-notices.py \
+              lib/ModernGekko/vendor/dolphin/Externals "$DEST/licenses/Dolphin/Externals"
+          else
+            python3 scripts/collect-third-party-notices.py \
+              lib/ModernGekko/vendor/dolphin/Externals "$DEST/licenses/Dolphin/Externals"
+          fi
 
           # Optional mods, each carrying the canonical host-patch payload so a
           # generated package can never ship stale renderer patches.
