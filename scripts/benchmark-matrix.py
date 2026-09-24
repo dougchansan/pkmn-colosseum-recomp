@@ -131,8 +131,7 @@ def run_case(args, scene, minimap, hd, scale, trial, outdir):
         automation.mkdir()
         command = [str(args.runner), "--game", str(args.game), "--module", str(args.module),
                    "--user-dir", str(user), "--load-state", scene["state"],
-                   "--automation-dir", str(automation), "--graphics",
-                   "OGL" if args.backend == "OpenGL" else args.backend,
+                   "--automation-dir", str(automation), "--graphics", args.backend,
                    "--no-mods", "--mods", str(mod_dir)]
         with Path(row["log"]).open("w", encoding="utf-8") as log:
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
@@ -180,6 +179,20 @@ def run_case(args, scene, minimap, hd, scale, trial, outdir):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+        # The HD pack can install gigabytes of textures into a fresh user
+        # profile. Keep the effective config and logs, then remove only this
+        # case's generated profile before starting the next of hundreds of runs.
+        case_dir = outdir / name
+        user_dir = case_dir / "user"
+        if user_dir.is_dir() and not user_dir.is_symlink():
+            try:
+                config = user_dir / "config.ini"
+                if config.is_file():
+                    shutil.copy2(config, case_dir / "effective-config.ini")
+                shutil.rmtree(user_dir)
+            except OSError as exc:
+                row["status"] = "failed"
+                row["error"] = f"could not remove generated user profile: {exc}"
     return row
 
 

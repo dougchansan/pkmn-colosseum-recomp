@@ -43,6 +43,8 @@ alternate trials to reduce thermal and background-load bias.
 Use `--only-scene NAME` and `--scales 1 2` for a smoke run. Add `--base-mod
 pokemon-colosseum-ultrawide.mgm` if the same non-minimap package should run in
 every arm. Each case uses a fresh user directory and an explicit mod directory.
+The generated user directory is removed after each run so the HD pack cannot
+fill the host disk; the effective config, logs, and measurements remain.
 
 `results.csv` and `results.json` contain one row per trial. `summary.csv` and the
 JSON summary contain medians only when all required trials passed. `status=failed`
