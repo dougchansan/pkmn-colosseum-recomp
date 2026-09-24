@@ -128,8 +128,9 @@ index 71916b7..924dd3c 100644
  /database/titles.txt
  /extern/wit/
 +*.orig
+warning: in the working copy of 'CMakeLists.txt', LF will be replaced by CRLF the next time Git touches it
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index bedf947..6777665 100644
+index bedf947..ead2ae0 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -44,10 +44,18 @@ set(MODERNGEKKO_DEFAULT_WINDOW_TITLE "" CACHE STRING
@@ -274,14 +275,22 @@ index bedf947..6777665 100644
      add_executable(moderngekko_frontend_config_gamecube_test
          tests/frontend_config_test.cpp
          tools/frontend_config.cpp)
-@@ -668,6 +739,39 @@ if(BUILD_TESTING)
+@@ -668,6 +739,47 @@ if(BUILD_TESTING)
      add_test(NAME moderngekko.frontend_config_gamecube
               COMMAND moderngekko_frontend_config_gamecube_test)
  
 +    add_executable(moderngekko_hd_texture_pack_test
 +        tests/hd_texture_pack_test.cpp)
-+    target_link_libraries(moderngekko_hd_texture_pack_test PRIVATE
-+        ModernGekko::Runtime uicommon)
++    # ResourcePack pulls Dolphin core objects, which require the Host_*
++    # callbacks implemented in dolphin_runtime.cpp. Linux's static linker
++    # otherwise discards that object because this test only calls pack APIs.
++    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
++        target_link_libraries(moderngekko_hd_texture_pack_test PRIVATE
++            "$<LINK_LIBRARY:WHOLE_ARCHIVE,moderngekko>" uicommon)
++    else()
++        target_link_libraries(moderngekko_hd_texture_pack_test PRIVATE
++            ModernGekko::Runtime uicommon)
++    endif()
 +    target_compile_features(moderngekko_hd_texture_pack_test PRIVATE cxx_std_23)
 +    add_test(NAME moderngekko.hd_texture_pack
 +             COMMAND moderngekko_hd_texture_pack_test)
@@ -314,7 +323,7 @@ index bedf947..6777665 100644
      if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
          add_executable(moderngekko_netplay_protocol_test
              tests/netplay_protocol_test.cpp
-@@ -678,6 +782,12 @@ if(BUILD_TESTING)
+@@ -678,6 +790,12 @@ if(BUILD_TESTING)
              "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/GXRuntime/include")
          target_compile_definitions(moderngekko_netplay_protocol_test PRIVATE
              MODERNGEKKO_NETPLAY_TEST_MOD_PATH="$<TARGET_FILE:moderngekko_test_mod>")
@@ -327,7 +336,7 @@ index bedf947..6777665 100644
          if(CMAKE_SIZEOF_VOID_P EQUAL 8)
              target_compile_definitions(moderngekko_netplay_protocol_test PRIVATE _ARCH_64=1)
          else()
-@@ -703,21 +813,6 @@ if(BUILD_TESTING)
+@@ -703,21 +821,6 @@ if(BUILD_TESTING)
              target_link_libraries(moderngekko_netplay_protocol_test PRIVATE
                  ModernGekko::Runtime core uicommon)
          endif()
