@@ -1,8 +1,8 @@
 diff --git a/src/app/pipeline.c b/src/app/pipeline.c
-index 512d020..75642aa 100644
+index a154731..112e6c9 100644
 --- a/src/app/pipeline.c
 +++ b/src/app/pipeline.c
-@@ -1254,6 +1254,81 @@ int emit_code_sections_split(const LoadedCodeSection* sections,
+@@ -937,6 +937,81 @@ int emit_code_sections_split(const LoadedCodeSection* sections,
      FunctionList funcs = {0};
      SMCAnalysis smc = {0};
  
@@ -84,7 +84,47 @@ index 512d020..75642aa 100644
      for (u32 s = 0; s < section_count; s++) {
          const LoadedCodeSection* section = &sections[s];
          if (section->size == 0 || !section->data) continue;
-@@ -1447,6 +1522,11 @@ int emit_code_sections_split(const LoadedCodeSection* sections,
+@@ -1081,29 +1156,10 @@ int emit_code_sections_split(const LoadedCodeSection* sections,
+             file_count++;
+         }
+ 
+-        // Direct cross-chunk calls bypass the chassis dispatcher. That is unsafe
+-        // for runtimes which validate mutable guest code at dispatch boundaries,
+-        // so only emit them after an explicit opt-in for controlled benchmarks.
+-        // funcs accumulates across sections; targets in a later section still
+-        // fall back to the dispatcher because their symbols are not known yet.
+-        const char* direct = getenv("DOLRECOMP_UNSAFE_DIRECT_CALLS");
+-        u32* chunk_starts = NULL;
+-        if (direct && strcmp(direct, "1") == 0) {
+-            printf("  unsafe cross-chunk direct calls enabled\n");
+-            chunk_starts = (u32*)malloc((size_t)funcs.count * sizeof(u32));
+-            if (chunk_starts) {
+-                for (u32 i = 0; i < funcs.count; ++i)
+-                    chunk_starts[i] = funcs.ranges[i].start;
+-                emit_set_chunk_table(chunk_starts, funcs.count);
+-            }
+-        }
+-
+         u32 active_jobs = effective_chunk_jobs(section_job_count, jobs);
+         printf("  writing %u chunks with %u job%s\n",
+                section_job_count, active_jobs, active_jobs == 1 ? "" : "s");
+         if (!run_chunk_jobs(chunk_jobs, section_job_count, jobs)) {
+-            emit_set_chunk_table(NULL, 0);
+-            free(chunk_starts);
+             smc_analysis_free(&smc);
+             function_list_free(&funcs);
+             free(chunk_jobs);
+@@ -1112,9 +1168,6 @@ int emit_code_sections_split(const LoadedCodeSection* sections,
+             fclose(manifest);
+             return 0;
+         }
+-        emit_set_chunk_table(NULL, 0);
+-        free(chunk_starts);
+-
+         free(chunk_jobs);
+         free(insts);
+     }
+@@ -1155,6 +1208,11 @@ int emit_code_sections_split(const LoadedCodeSection* sections,
  
      emit_dispatch_helpers(header, &funcs, entry_point);
      emit_footer(header);
@@ -189,7 +229,7 @@ index 4f732f2..8f8ce6d 100644
 +
  #endif
 diff --git a/src/backend/emitter.c b/src/backend/emitter.c
-index 45c3286..165403f 100644
+index 1cae76f..b3720d7 100644
 --- a/src/backend/emitter.c
 +++ b/src/backend/emitter.c
 @@ -4,6 +4,85 @@
@@ -399,7 +439,7 @@ index 45c3286..165403f 100644
              u32 continuation = insts[cfg.loop_ends[i]].address + 4u;
              fprintf(out, "    loop_%08X(ctx);\n", insts[i].address);
 diff --git a/src/backend/emitter.h b/src/backend/emitter.h
-index 39d8f3c..dabb06f 100644
+index 740f940..c8d0188 100644
 --- a/src/backend/emitter.h
 +++ b/src/backend/emitter.h
 @@ -21,7 +21,7 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu);

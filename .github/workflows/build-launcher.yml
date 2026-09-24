@@ -17,10 +17,6 @@ on:
         default: linux
         options: [linux, all, windows, macos]
   pull_request:
-    paths:
-      - '.github/workflows/build-launcher.yml'
-      - 'mods/**'
-      - 'scripts/**'
   push:
     tags:
       - 'v*'
@@ -63,7 +59,7 @@ jobs:
 
     steps:
       - name: Checkout with submodules
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
           fetch-depth: 0
@@ -90,7 +86,16 @@ jobs:
 
       - name: Set up MSVC environment
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+
+      - name: Verify host patch bundle
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            python scripts/check-host-patch-bundle.py
+          else
+            python3 scripts/check-host-patch-bundle.py
+          fi
 
       - name: Apply host patches
         shell: bash
@@ -115,7 +120,7 @@ jobs:
         run: |
           cmake -S lib/ModernGekko -B lib/ModernGekko/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=OFF \
+            -DBUILD_TESTING=ON \
             -DCMAKE_C_FLAGS="${{ steps.trim.outputs.cflags }}" \
             -DCMAKE_CXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
             -DCMAKE_OBJC_FLAGS="${{ steps.trim.outputs.cflags }}" \
@@ -139,6 +144,13 @@ jobs:
         run: >
           cmake --build lib/ModernGekko/build --parallel 4
           --target moderngekko-launcher moderngekko-run moderngekko-port
+
+      - name: Build and run ModernGekko tests
+        shell: bash
+        run: |
+          cmake --build lib/ModernGekko/build --parallel 4
+          ctest --test-dir lib/ModernGekko/build -N -R '^moderngekko\.' | grep -Eq 'Total Tests: [1-9][0-9]*'
+          ctest --test-dir lib/ModernGekko/build --output-on-failure -R '^moderngekko\.'
 
       - name: Build optional mod packages
         shell: bash
@@ -164,7 +176,16 @@ jobs:
           cp "$MG/moderngekko-run${{ matrix.exe }}" "$DEST/"
           cp -R "$MG/Sys" "$DEST/"
           cp -R "$MG/patches" "$DEST/"
-          cp LICENSE THIRD_PARTY_NOTICES.md VERSION "$DEST/"
+          cp LICENSE THIRD_PARTY_NOTICES.md VERSION README.md CHANGELOG.md SECURITY.md SOURCE.md "$DEST/"
+          {
+            git rev-parse HEAD
+            git submodule status --recursive
+          } > "$DEST/SOURCE_REVISIONS.txt"
+          mkdir -p "$DEST/licenses/ModernGekko" "$DEST/licenses/DolRecomp" "$DEST/licenses/Dolphin"
+          cp lib/ModernGekko/LICENSE "$DEST/licenses/ModernGekko/"
+          cp lib/DolRecomp/LICENSE "$DEST/licenses/DolRecomp/"
+          cp lib/ModernGekko/vendor/dolphin/COPYING "$DEST/licenses/Dolphin/"
+          cp -R lib/ModernGekko/vendor/dolphin/LICENSES "$DEST/licenses/Dolphin/"
 
           # Optional mods, each carrying the canonical host-patch payload so a
           # generated package can never ship stale renderer patches.
@@ -175,18 +196,6 @@ jobs:
             cp "$pkg/${{ matrix.modlib }}" "$DEST/Mods/Optional/$name/"
             cp -R mods/host-patches "$DEST/Mods/Optional/$name/"
           done
-
-          # Project HD text textures only. The community HD pack is a separate
-          # ~690 MB download and is deliberately not bundled.
-          # Optional: the textures are not committed on every branch, and an
-          # artifact without them is still a valid launcher.
-          mkdir -p "$DEST/User/Load/Textures"
-          if [ -d assets/hd-textures/GC6E01 ]; then
-            cp -R assets/hd-textures/GC6E01 "$DEST/User/Load/Textures/"
-            echo "bundled $(find assets/hd-textures/GC6E01 -type f | wc -l) HD text textures"
-          else
-            echo "::notice::assets/hd-textures/GC6E01 absent on this ref; artifact ships without HD text textures"
-          fi
 
           # Empty runtime scaffolding; no savestates, memory cards or configs.
           mkdir -p "$DEST/User/Config" "$DEST/User/GameSettings" \
@@ -201,9 +210,24 @@ jobs:
           fail=0
           # Savestates, memory cards, dev harness and the local game pointer
           # must never reach an artifact.
-          if find "$DEST" \( -name '*.sav' -o -name '*.gci' -o -name 'SRAM.raw' \
+          if find "$DEST" -type l | grep -q .; then
+            echo "::error::package contains a symlink"
+            fail=1
+          fi
+          if find "$DEST" -type f \( -iname '*.iso' -o -iname '*.gcm' \
+               -o -iname '*.ciso' -o -iname '*.rvz' -o -iname '*.nkit*' \
+               -o -iname '*.dol' -o -iname '*.elf' -o -iname '*.gci' \
+               -o -iname '*.raw' -o -iname '*.sav' -o -iname '*.state' \
                -o -name 'default-game.txt' -o -name '*recomp*.dll' \) | grep -q .; then
             echo "::error::package contains excluded runtime or game-derived files"
+            fail=1
+          fi
+          # Dolphin's stock Sys/Resources contains launcher icons; image files
+          # in the user or mod trees would be unexpected game/texture payloads.
+          if find "$DEST/User" "$DEST/Mods" -type f \( \
+               -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \
+               -o -iname '*.dds' -o -iname '*.ktx' -o -iname '*.ktx2' \) | grep -q .; then
+            echo "::error::package contains unexpected user or mod image data"
             fail=1
           fi
           if grep -rl 'runneradmin\|/Users/runner/work' "$DEST" 2>/dev/null | grep -q .; then
@@ -212,8 +236,14 @@ jobs:
           fi
           exit $fail
 
+      - name: Hash artifact contents
+        shell: bash
+        run: |
+          cd build/artifact/PokemonColosseumRecomp
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: PokemonColosseumRecomp-${{ matrix.label }}
           path: build/artifact/PokemonColosseumRecomp

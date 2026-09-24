@@ -26,8 +26,11 @@ Public License, version 3 or (at your option) any later version. See `LICENSE`.
 
 The setup scripts identify the upstream revisions used by this release and
 apply the game-specific host patches. When distributing object code, provide
-the matching source snapshot, this notice, the full GPL license, build
-instructions, and clear access to the corresponding upstream source.
+the complete corresponding source for the exact binary being distributed,
+including this project's matching revision, the upstream revisions and patches
+used to build it, this notice, the applicable licenses, and build instructions.
+Pointing only to a moving default branch is insufficient for a reproducible
+source offer.
 
 ## Optional community assets
 

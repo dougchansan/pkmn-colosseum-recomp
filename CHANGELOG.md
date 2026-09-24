@@ -44,9 +44,9 @@ the change, not a promise for any particular system.
   `build/release` and deliberately preserves its `User` directory, so on a
   machine that has played the game that directory accumulates a memory card,
   savestates and that player's own settings. The distribution mode writes to its
-  own path, never touches `build/release`, and fails the build if the packaged
-  `User` directory contains anything but the generated config, game settings,
-  controller profile and HD textures.
+  own path, never touches `build/release`, excludes the locally generated game
+  module, and fails if `User` contains anything but the generated config, game
+  settings and controller profile. No replacement game textures are included.
 - Benchmark and profiling harnesses used for the above: A/B runners that hold
   the module byte-identical across arms, a PC-sample attributor, a cold-boot
   harness, and a CPU ABI guard.
@@ -57,9 +57,8 @@ the change, not a promise for any particular system.
   saying where to get it. The pack is not redistributed here -- it is its
   author's work and its author's download.
 - The curated UI and title-screen texture overrides are not shipped in this
-  release. They are replacement game textures, held back pending a decision on
-  distributing them; `package-imgui-launcher.ps1 -HdTextures` restores them to a
-  package without any other change.
+  release. They are replacement game textures and are excluded from public
+  source archives and distribution packages.
 
 ### Fixed
 

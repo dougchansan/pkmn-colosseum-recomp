@@ -5309,8 +5309,9 @@ index 0000000..b952a67
 +
 +  return 0;
 +}
+warning: in the working copy of 'tests/frontend_config_test.cpp', LF will be replaced by CRLF the next time Git touches it
 diff --git a/tests/frontend_config_test.cpp b/tests/frontend_config_test.cpp
-index 6bb9e0e..e059832 100644
+index 6bb9e0e..d109c11 100644
 --- a/tests/frontend_config_test.cpp
 +++ b/tests/frontend_config_test.cpp
 @@ -29,13 +29,39 @@ int main() {
@@ -5354,7 +5355,7 @@ index 6bb9e0e..e059832 100644
    netplay_config.controllers = {controller, "SDL/1/Second Controller"};
    netplay_config.controller = controller;
    netplay_config.netplay_nickname = "Kirby";
-@@ -53,6 +79,28 @@ int main() {
+@@ -53,10 +79,42 @@ int main() {
        netplay_loaded.netplay_port != 34567 ||
        netplay_loaded.netplay_buffer != "auto" ||
        netplay_loaded.graphics_backend != "OGL" ||
@@ -5383,7 +5384,21 @@ index 6bb9e0e..e059832 100644
        !netplay_loaded.fullscreen) {
      return 7;
    }
-@@ -69,6 +117,98 @@ int main() {
+ 
++  auto metal_config = netplay_loaded;
++  metal_config.graphics_backend = "Metal";
++  metal_config.resolution = "3200x2640";
++  if (!moderngekko::frontend::SaveConfig(directory, metal_config, &error))
++    return 27;
++  const auto metal_loaded = moderngekko::frontend::LoadConfig(directory, false);
++  if (!metal_loaded || metal_loaded.graphics_backend != "Metal" ||
++      metal_loaded.dolphin_scale != 5)
++    return 28;
++
+   auto invalid_netplay = netplay_config;
+   invalid_netplay.netplay_address = "not a host";
+   if (moderngekko::frontend::SaveConfig(directory, invalid_netplay, &error))
+@@ -69,6 +127,98 @@ int main() {
    invalid_netplay.graphics_backend = "Direct3D 9";
    if (moderngekko::frontend::SaveConfig(directory, invalid_netplay, &error))
      return 13;
@@ -6671,11 +6686,21 @@ index f156b76..293c132 100644
  // Process-wide affinity can interfere with Dolphin's worker threads, so require
  // an exact, explicit opt-in instead of changing every launch by default.
  inline bool AffinityEnabled(const char* value)
+warning: in the working copy of 'tools/frontend_config.cpp', LF will be replaced by CRLF the next time Git touches it
 diff --git a/tools/frontend_config.cpp b/tools/frontend_config.cpp
-index 03740d4..7f55852 100644
+index 03740d4..30473e6 100644
 --- a/tools/frontend_config.cpp
 +++ b/tools/frontend_config.cpp
-@@ -55,6 +55,23 @@ bool ParseBoolean(const std::string &value, bool *result) {
+@@ -40,6 +40,8 @@ std::string NormalizeGraphicsBackend(std::string value) {
+     return "Vulkan";
+   if (lower == "opengl" || lower == "ogl")
+     return "OGL";
++  if (lower == "metal")
++    return "Metal";
+   return {};
+ }
+ 
+@@ -55,6 +57,23 @@ bool ParseBoolean(const std::string &value, bool *result) {
    return false;
  }
  
@@ -6699,7 +6724,25 @@ index 03740d4..7f55852 100644
  fs::path ControllerConfigPath(const fs::path &user_directory) {
  #ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
    return user_directory / "Config" / "GCPadNew.ini";
-@@ -137,6 +154,87 @@ ConfigResult LoadConfig(const fs::path &user_directory,
+@@ -78,13 +97,16 @@ const std::vector<ResolutionOption> &SupportedResolutions() {
+   // scales.
+   static const std::vector<ResolutionOption> resolutions = {
+       {"640x528", 1},   {"1280x720", 2},  {"1920x1080", 3},  {"2560x1440", 4},
+-      {"3840x2160", 6}, {"5120x2880", 8}, {"7680x4320", 12},
++      {"3200x2640", 5}, {"3840x2160", 6}, {"5120x2880", 8}, {"7680x4320", 12},
+   };
+   return resolutions;
+ }
+ 
+ const std::vector<GraphicsBackendOption> &SupportedGraphicsBackends() {
+   static const std::vector<GraphicsBackendOption> backends = {
++#ifdef __APPLE__
++      {"Metal", "Metal"},
++#endif
+       {"Vulkan", "Vulkan"},
+       {"OpenGL", "OGL"},
+   };
+@@ -137,6 +159,87 @@ ConfigResult LoadConfig(const fs::path &user_directory,
      } else if (key == "show_fps_in_title") {
        if (!ParseBoolean(value, &config.show_fps_in_title))
          return {.error = "show_fps_in_title must be true or false"};
@@ -6787,7 +6830,7 @@ index 03740d4..7f55852 100644
      } else if (key == "fullscreen") {
        if (!ParseBoolean(value, &config.fullscreen))
          return {.error = "fullscreen must be true or false"};
-@@ -211,6 +309,19 @@ bool SaveConfig(const fs::path &user_directory, const ConfigResult &config,
+@@ -211,6 +314,19 @@ bool SaveConfig(const fs::path &user_directory, const ConfigResult &config,
    const std::string graphics_backend =
        NormalizeGraphicsBackend(config.graphics_backend);
    if (config.resolution.empty() || graphics_backend.empty() ||
@@ -6807,7 +6850,7 @@ index 03740d4..7f55852 100644
        config.netplay_nickname.empty() ||
        config.netplay_nickname.size() > 30 ||
        config.netplay_nickname.find_first_of("\r\n") != std::string::npos ||
-@@ -253,10 +364,38 @@ bool SaveConfig(const fs::path &user_directory, const ConfigResult &config,
+@@ -253,10 +369,38 @@ bool SaveConfig(const fs::path &user_directory, const ConfigResult &config,
            "[Video]\n"
            "resolution="
         << config.resolution << '\n'

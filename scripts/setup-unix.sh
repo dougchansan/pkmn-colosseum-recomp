@@ -25,7 +25,7 @@ PATCHES=$ROOT/patches/GC6E01-native-widescreen.csv
 # is correct but materially slower and nothing else would flag the omission.
 SUBSTITUTIONS=$ROOT/patches/GC6E01-native-substitutions.csv
 DOLRECOMP_BASE=fa0cf619e8d7eb8cba7eaf55267a12caaebb46aa
-MODERNGEKKO_BASE=884c20505d7179160f8bb01d9db0f723c53b09cb
+MODERNGEKKO_BASE=0514d9f03f8602809f66fc92fdca87d30e752997
 GRAPHICS_BACKEND=Vulkan
 if [ "$(uname -s)" = Darwin ]; then
     GRAPHICS_BACKEND=Metal
@@ -38,6 +38,7 @@ for command in git cmake ninja python3; do
     }
 done
 [ -f "$ISO" ] || { echo "Pokemon Colosseum ISO not found: $ISO" >&2; exit 1; }
+python3 "$ROOT/scripts/verify-disc.py" "$ISO"
 
 mkdir -p "$ROOT/lib"
 if [ ! -f "$DOLRECOMP/CMakeLists.txt" ]; then
@@ -59,10 +60,7 @@ if [ ! -f "$GAME/sys/main.dol" ]; then
     mkdir -p "$GAME"
     "$DOL_BUILD/dolrecomp" extract "$ISO" "$GAME"
 fi
-[ "$(dd if="$GAME/sys/boot.bin" bs=1 count=6 2>/dev/null)" = GC6E01 ] || {
-    echo "this release requires the USA disc (GC6E01)" >&2
-    exit 1
-}
+python3 "$ROOT/scripts/verify-disc.py" "$ISO" "$GAME"
 
 cmake -S "$MODERNGEKKO" -B "$MG_BUILD" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \

@@ -4,7 +4,7 @@ Makefile text eol=lf
 # The host patches are checksum-verified before they are applied, so their
 # bytes must survive checkout unchanged. Without this, core.autocrlf=true
 # rewrites them to CRLF on Windows and the SHA256 gate fails.
-*.patch -text
+*.patch -text whitespace=-blank-at-eol
 
 *.ps1 text eol=crlf
 *.bat text eol=crlf

@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-blue)](#platform-status)
-[![Release](https://img.shields.io/badge/release-v1.0.0-success)](#versioning)
+[![Release](https://img.shields.io/badge/release-v1.1.0-success)](#versioning)
 [![Backends](https://img.shields.io/badge/backends-C%20%7C%20LLVM-8A2BE2)](#source-and-mods)
 [![Recompiler](https://img.shields.io/badge/recompiler-DolRecomp-informational)](https://github.com/ExpansionPak/DolRecomp)
 [![Runtime](https://img.shields.io/badge/runtime-ModernGekko-informational)](https://github.com/ExpansionPak/ModernGekko)
@@ -30,6 +30,11 @@ command-line tools; Linux needs ModernGekko/Dolphin's SDL, GTK, audio, Vulkan,
 X11, and Wayland development packages. Setup stops with the name of any
 missing command.
 
+Setup verifies the supported USA ISO (SHA-256
+`78c4074429fa598b97bfac296bf8e0f7e93f5cb6d8679f8d2653ca902820f6c5`)
+and its original `main.dol` before applying game patches. A stale or modified
+extraction is rejected with an explanation.
+
 ### GitHub Release ZIP or tar.gz
 
 Download `Source code (zip)` or `Source code (tar.gz)` from the GitHub Release,
@@ -40,14 +45,14 @@ must provide the path to your own legally obtained USA (`GC6E01`) ISO.
 Windows PowerShell:
 
 ```powershell
-Set-Location "C:\path\to\pkmn-colosseum-recomp-1.0.0"
+Set-Location "C:\path\to\pkmn-colosseum-recomp-1.1.0"
 .\setup.ps1 -Iso "D:\path\to\Pokemon Colosseum.iso"
 ```
 
 Linux or macOS:
 
 ```sh
-cd /path/to/pkmn-colosseum-recomp-1.0.0
+cd /path/to/pkmn-colosseum-recomp-1.1.0
 sh ./setup.sh "/path/to/Pokemon Colosseum.iso"
 ```
 
@@ -227,12 +232,13 @@ builds a working module, but it is **not** faster: measured windowed with every
 enhancement enabled, C beats it by ~1.8x (per-scene 1.62x-2.00x across seven
 scenes), and the LLVM module is 4.4x larger (190 MiB from 4890 objects against
 43 MiB from 154 chunks). Treat LLVM as an alternative code path for development,
-not as an optimisation. Method and per-scene figures:
-[`build/bench-mods-20260819/RESULTS.md`](build/bench-mods-20260819/RESULTS.md).
+not as an optimisation. These figures are from the August 2026 seven-scene
+local A/B comparison; its generated report lives under the ignored `build/`
+directory and is not part of the source release.
 
 ## Versioning
 
-The current release is **1.0.0**. Releases follow
+The current release is **1.1.0**. Releases follow
 [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
 
 - `MAJOR` changes can break an existing user's setup or integrations. For
@@ -242,13 +248,13 @@ The current release is **1.0.0**. Releases follow
 - `MINOR` changes add a feature while remaining backward compatible. That
   means a 1.x setup that worked before should keep working without conversion
   or changed commands. Adding an optional photo mode or a new graphics toggle
-  could therefore be `1.1.0`.
+  could therefore be `1.2.0`.
 - `PATCH` changes fix behavior without changing the supported interface. Here,
   compatible means existing commands, configuration, saves, and mods keep the
   same meaning. Fixing a stretched menu or a crash while loading the same save
-  could therefore be `1.0.1`.
+  could therefore be `1.1.1`.
 
-Git release tags use the conventional `v` prefix, such as `v1.0.0`.
+Git release tags use the conventional `v` prefix, such as `v1.1.0`.
 
 ## Platform status
 
@@ -270,9 +276,11 @@ complete built player directory.
 Original project source and patches are licensed under
 [GPL-3.0-or-later](LICENSE). DolRecomp, ModernGekko, RecompCore, and their
 dependencies retain their upstream copyright notices and per-file licenses;
-see [third-party notices](THIRD_PARTY_NOTICES.md). A binary release must be
-accompanied by its matching source snapshot, license, notices, and build
-instructions.
+see [third-party notices](THIRD_PARTY_NOTICES.md). Anyone distributing a binary
+must provide its complete corresponding source, including the exact project
+revision, upstream revisions, and patches used to build it, with license,
+notices, and build instructions. See [security reporting](SECURITY.md) for
+how to report a vulnerability.
 
 Pokemon, Pokemon Colosseum, Nintendo, Game Freak, and Creatures are trademarks
 or copyrights of their respective owners. This fan project is not affiliated

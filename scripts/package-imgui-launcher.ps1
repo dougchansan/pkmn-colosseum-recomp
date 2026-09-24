@@ -51,6 +51,17 @@ if ($CommunityHdPackZip) {
     }
 }
 
+if ($Distribution -and ($AiHarness -or $HdTextures -or $CommunityHdPackZip)) {
+    throw 'A distribution cannot include the AI harness, curated HD textures, or a local community texture archive.'
+}
+if ($Distribution) {
+    $sourceChanges = @(& git -C $projectRoot status --porcelain=v1 `
+        --untracked-files=normal --ignore-submodules=dirty)
+    if ($LASTEXITCODE -ne 0 -or $sourceChanges.Count) {
+        throw 'Distribution requires a clean source commit; build from a committed release candidate.'
+    }
+}
+
 if (-not $env:INCLUDE) {
     $environmentDump = & cmd.exe /d /c "`"$PSScriptRoot\vsdev-dump.bat`""
     foreach ($line in $environmentDump) {
@@ -70,7 +81,7 @@ if (-not $env:INCLUDE) {
     }
 }
 
-if (-not (Test-Path -LiteralPath $gameRoot -PathType Container)) {
+if (-not $Distribution -and -not (Test-Path -LiteralPath $gameRoot -PathType Container)) {
     throw "Missing extracted game: $gameRoot"
 }
 if (-not (Test-Path -LiteralPath $dolPatchManifest -PathType Leaf)) {
@@ -121,7 +132,7 @@ if ($LASTEXITCODE -ne 0) {
 # branches into guest instructions that were data when DolRecomp analyzed the
 # original image, producing a stretched fallback projection or an interpreter
 # trap at 0x80005300.
-if (-not $SkipModuleBuild) {
+if (-not $Distribution -and -not $SkipModuleBuild) {
     $port = Join-Path $modernGekkoBuild 'moderngekko-port.exe'
     $moduleOutput = Join-Path $projectRoot 'build\modules'
     $dolPatches = Import-Csv -LiteralPath $dolPatchManifest
@@ -163,26 +174,28 @@ if (-not $SkipModuleBuild) {
     }
 }
 
-if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
-    throw "Missing stable C module marker after build: $marker"
-}
-$moduleValue = (Get-Content -LiteralPath $marker -Raw).Trim()
-$modulePath = if ([IO.Path]::IsPathRooted($moduleValue)) {
-    $moduleValue
-} else {
-    Join-Path $projectRoot $moduleValue
-}
-if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
-    throw "Stable C module does not exist: $modulePath"
-}
-$module60Value = (Get-Content -LiteralPath $marker60 -Raw).Trim()
-$module60Path = if ([IO.Path]::IsPathRooted($module60Value)) {
-    $module60Value
-} else {
-    Join-Path $projectRoot $module60Value
-}
-if (-not (Test-Path -LiteralPath $module60Path -PathType Leaf)) {
-    throw "Optional 60 FPS C module does not exist: $module60Path"
+if (-not $Distribution) {
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+        throw "Missing stable C module marker after build: $marker"
+    }
+    $moduleValue = (Get-Content -LiteralPath $marker -Raw).Trim()
+    $modulePath = if ([IO.Path]::IsPathRooted($moduleValue)) {
+        $moduleValue
+    } else {
+        Join-Path $projectRoot $moduleValue
+    }
+    if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
+        throw "Stable C module does not exist: $modulePath"
+    }
+    $module60Value = (Get-Content -LiteralPath $marker60 -Raw).Trim()
+    $module60Path = if ([IO.Path]::IsPathRooted($module60Value)) {
+        $module60Value
+    } else {
+        Join-Path $projectRoot $module60Value
+    }
+    if (-not (Test-Path -LiteralPath $module60Path -PathType Leaf)) {
+        throw "Optional 60 FPS C module does not exist: $module60Path"
+    }
 }
 
 $launcher = Join-Path $modernGekkoBuild 'PokemonColosseumRecomp.exe'
@@ -202,18 +215,39 @@ function Install-Package([string]$destination, [switch]$DeveloperInstall) {
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
     Copy-Item -LiteralPath $launcher -Destination (Join-Path $destination 'PokemonColosseumRecomp.exe') -Force
     Copy-Item -LiteralPath $runner -Destination (Join-Path $destination 'moderngekko-run.exe') -Force
-    Copy-Item -LiteralPath $modulePath -Destination (Join-Path $destination 'gGC6E01_recomp.dll') -Force
-    Copy-Item -LiteralPath $module60Path `
-        -Destination (Join-Path $destination 'gGC6E01_recomp_60fps.dll') -Force
+    if (-not $Distribution) {
+        Copy-Item -LiteralPath $modulePath -Destination (Join-Path $destination 'gGC6E01_recomp.dll') -Force
+        Copy-Item -LiteralPath $module60Path `
+            -Destination (Join-Path $destination 'gGC6E01_recomp_60fps.dll') -Force
+    }
     Copy-Item -LiteralPath $sys -Destination $destination -Recurse -Force
     Copy-Item -LiteralPath $patches -Destination $destination -Recurse -Force
-    foreach ($releaseDocument in @('LICENSE', 'THIRD_PARTY_NOTICES.md', 'VERSION')) {
+    foreach ($releaseDocument in @('LICENSE', 'THIRD_PARTY_NOTICES.md', 'VERSION',
+            'README.md', 'CHANGELOG.md', 'SECURITY.md', 'SOURCE.md')) {
         $sourceDocument = Join-Path $projectRoot $releaseDocument
         $destinationDocument = Join-Path $destination $releaseDocument
         if ([IO.Path]::GetFullPath($sourceDocument) -ne
             [IO.Path]::GetFullPath($destinationDocument)) {
             Copy-Item -LiteralPath $sourceDocument -Destination $destination -Force
         }
+    }
+    if (-not $DeveloperInstall) {
+        $licenses = Join-Path $destination 'licenses'
+        foreach ($component in @('ModernGekko', 'DolRecomp', 'Dolphin')) {
+            New-Item -ItemType Directory -Path (Join-Path $licenses $component) -Force | Out-Null
+        }
+        Copy-Item -LiteralPath (Join-Path $modernGekkoRoot 'LICENSE') `
+            -Destination (Join-Path $licenses 'ModernGekko') -Force
+        Copy-Item -LiteralPath (Join-Path $projectRoot 'lib\DolRecomp\LICENSE') `
+            -Destination (Join-Path $licenses 'DolRecomp') -Force
+        $dolphinRoot = Join-Path $modernGekkoRoot 'vendor\dolphin'
+        Copy-Item -LiteralPath (Join-Path $dolphinRoot 'COPYING') `
+            -Destination (Join-Path $licenses 'Dolphin') -Force
+        Copy-Item -LiteralPath (Join-Path $dolphinRoot 'LICENSES') `
+            -Destination (Join-Path $licenses 'Dolphin') -Recurse -Force
+        @((& git -C $projectRoot rev-parse HEAD),
+            (& git -C $projectRoot submodule status --recursive)) |
+            Set-Content -LiteralPath (Join-Path $destination 'SOURCE_REVISIONS.txt') -Encoding ascii
     }
     $optionalMods = Join-Path $destination 'Mods\Optional'
     New-Item -ItemType Directory -Path $optionalMods -Force | Out-Null
@@ -409,25 +443,39 @@ if ($Distribution) {
     }
     Install-Package $distributionRoot
 
-    # A distribution carrying save data or savestates is the failure this mode
-    # exists to prevent, so check rather than trust. Install-Package writes only
-    # config.ini, GameSettings, Config and Load/Textures.
+    # The only User files in a player release are the templates written above.
+    # Check individual files, since a top-level directory check misses a card
+    # or local config nested under an otherwise allowed directory.
     $userRoot = Join-Path $distributionRoot 'User'
-    $allowed = @('config.ini', 'GameSettings', 'Config', 'Load', 'ResourcePacks')
-    $unexpected = Get-ChildItem -LiteralPath $userRoot -Force |
-        Where-Object { $_.Name -notin $allowed }
-    if ($unexpected) {
-        throw ('Distribution User directory has unexpected entries: ' +
-               ($unexpected.Name -join ', '))
+    $allowedUserFiles = @('config.ini', 'GameSettings\GC6E01.ini',
+        'Config\GCPadNew.ini')
+    $unexpectedUserFiles = @(Get-ChildItem -LiteralPath $userRoot -Recurse -Force -File |
+        Where-Object {
+            $_.FullName.Substring($userRoot.Length + 1) -notin $allowedUserFiles
+        })
+    if ($unexpectedUserFiles.Count) {
+        throw ('Distribution User directory has unexpected files: ' +
+            (($unexpectedUserFiles | Select-Object -First 5 -ExpandProperty FullName) -join ', '))
     }
-    foreach ($pattern in @('*.gci', '*.raw', '*.sav', '*.s01')) {
-        $leaked = Get-ChildItem -LiteralPath $userRoot -Recurse -File -Filter $pattern `
-            -ErrorAction SilentlyContinue
-        if ($leaked) {
-            throw ('Distribution carries player data: ' +
-                   (($leaked | Select-Object -First 5).Name -join ', '))
-        }
+    $forbidden = @(Get-ChildItem -LiteralPath $distributionRoot -Recurse -Force -File |
+        Where-Object {
+            $_.Extension -match '^\.(iso|gcm|dol|gci|raw|sav|s[0-9]{2})$' -or
+            $_.Name -match '(?i)^gGC6E01_recomp' -or
+            $_.Name -match '(?i)^(boot\.bin|default-game\.txt)$' -or
+            $_.FullName -match '(?i)[\\/](?:extracted|ai-harness|private)[\\/]'
+        })
+    if ($forbidden.Count) {
+        throw ('Distribution contains game, player, or private files: ' +
+            (($forbidden | Select-Object -First 5 -ExpandProperty FullName) -join ', '))
     }
+    $checksums = Join-Path $distributionRoot 'SHA256SUMS'
+    Get-ChildItem -LiteralPath $distributionRoot -Recurse -Force -File |
+        Where-Object FullName -ne $checksums |
+        Sort-Object FullName |
+        ForEach-Object {
+            $relative = $_.FullName.Substring($distributionRoot.Length + 1).Replace('\', '/')
+            '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower(), $relative
+        } | Set-Content -LiteralPath $checksums -Encoding ascii
 } else {
     if (Test-Path -LiteralPath $packageRoot) {
         # A package refresh may replace binaries and bundled mods, but the

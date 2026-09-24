@@ -20,6 +20,7 @@ CMakeUserPresets.json
 /config.ini
 
 # Game data and copyrighted assets - never commit
+/assets/hd-textures/
 *.iso
 *.rvz
 *.gcm
@@ -79,6 +80,11 @@ Thumbs.db
 # Benchmark savestates. ~1.5 GB of runtime snapshots; regenerate locally rather
 # than tracking them.
 /states/
+
+# Private AI gameplay-driving harness. Kept out of the tree that produces the
+# player release; ModernGekko builds without it unless MODERNGEKKO_ENABLE_AI_HARNESS
+# is set.
+/tools/ai-harness/
 
 # build transcripts from the toolchain/module scripts
 build-*.log

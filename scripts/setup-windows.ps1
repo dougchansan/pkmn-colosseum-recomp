@@ -26,6 +26,8 @@ foreach ($command in @('git', 'cmake', 'ninja', 'python')) {
         throw "Required build tool is not on PATH: $command"
     }
 }
+python (Join-Path $PSScriptRoot 'verify-disc.py') $isoPath
+if ($LASTEXITCODE -ne 0) { throw 'Unsupported GC6E01 ISO.' }
 
 if (-not $env:INCLUDE) {
     $environmentDump = & cmd.exe /d /c "`"$PSScriptRoot\vsdev-dump.bat`""
@@ -85,15 +87,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Game extraction failed.' }
     }
 
-    $bootBin = Join-Path $gameRoot 'sys\boot.bin'
-    if (-not (Test-Path -LiteralPath $bootBin -PathType Leaf)) {
-        throw "Extracted game is incomplete: $bootBin is missing."
-    }
-    $bootBytes = [IO.File]::ReadAllBytes($bootBin)
-    $discId = [Text.Encoding]::ASCII.GetString($bootBytes, 0, 6)
-    if ($discId -ne 'GC6E01') {
-        throw "This release requires the USA Pokemon Colosseum disc (GC6E01); found $discId."
-    }
+    python (Join-Path $PSScriptRoot 'verify-disc.py') $isoPath $gameRoot
+    if ($LASTEXITCODE -ne 0) { throw 'GC6E01 disc verification failed.' }
 
     & (Join-Path $PSScriptRoot 'package-imgui-launcher.ps1') `
         -ParallelJobs $ParallelJobs
