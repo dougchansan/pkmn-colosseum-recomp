@@ -14,7 +14,7 @@
     "ref": "master",
     "baseCommit": "0514d9f03f8602809f66fc92fdca87d30e752997",
     "patch": "moderngekko.patch",
-      "sha256": "CE1A749F67505B2731DAA2586B440A4D128EE93089FDA0DF9144FC8C56E445D1"
+      "sha256": "ACF5E5A5C6FE1CA8C0257393AB4EC989ECAFD817641B0B368629E4EA088A3064"
   },
   "recompCore": {
     "repository": "https://github.com/ExpansionPak/RecompCore.git",

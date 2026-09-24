@@ -8551,3 +8551,16 @@ index a1fba9f..aabc4d8 100644
      }
    }
    if (!module_path.empty())
+diff --git a/tests/runtime_test.cpp b/tests/runtime_test.cpp
+index 582879c..ca211d3 100644
+--- a/tests/runtime_test.cpp
++++ b/tests/runtime_test.cpp
+@@ -4,7 +4,7 @@
+ 
+ int main()
+ {
+-  static_assert(sizeof(CPUState) == 3528u);
++  static_assert(sizeof(CPUState) == 3536u);
+ 
+   moderngekko::LegacyRuntime runtime(true);
+   const moderngekko::ModuleLoadResult loaded =
