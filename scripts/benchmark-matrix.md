@@ -38,6 +38,8 @@ minimap off/on, community HD pack off/on, 1x through 6x internal resolution,
 and three separate trials of each case. Linux defaults to Vulkan and macOS to
 Metal; `--backend` overrides this. The selected backend is written into each
 fresh user configuration and passed to the runner.
+Each scene runs all configurations once per trial, reversing their order on
+alternate trials to reduce thermal and background-load bias.
 Use `--only-scene NAME` and `--scales 1 2` for a smoke run. Add `--base-mod
 pokemon-colosseum-ultrawide.mgm` if the same non-minimap package should run in
 every arm. Each case uses a fresh user directory and an explicit mod directory.
@@ -49,5 +51,6 @@ measurements. `unique_fps` is the change in the runner's unique `frame_count`
 over elapsed wall time. `status_fps` and `status_vps` are averages of the runner's
 live status readings; `ms_per_frame` is derived from unique FPS. Per-case logs
 are kept alongside the results. The JSON includes host, platform, configuration,
-and hashes for the runner, module, and HD ZIP. Use the same scene manifest,
+source commit, and hashes for the runner, module, HD ZIP, and each savestate.
+Use the same scene manifest,
 durations, and repetition count on both hosts when comparing results.

@@ -40,6 +40,13 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def source_commit():
+    root = Path(__file__).resolve().parent.parent
+    result = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                            capture_output=True, text=True, check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
 def read_status(path):
     try:
         values = dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
@@ -274,6 +281,7 @@ def main():
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=False)
     metadata = {"timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "source_commit": source_commit(),
                 "host": socket.gethostname(), "platform": platform.platform(),
                 "machine": platform.machine(), "processor": platform.processor(),
                 "python": platform.python_version(), "runner_sha256": sha256(args.runner),
@@ -282,29 +290,35 @@ def main():
                 "warmup_s": args.warmup, "boot_timeout_s": args.boot_timeout,
                 "scales": args.scales, "repetitions": args.repetitions,
                 "base_mods": args.base_mod,
-                "scene_source": str((args.manifest or args.states_dir).resolve())}
+                "scene_source": str((args.manifest or args.states_dir).resolve()),
+                "scenes": [{"name": scene["name"],
+                            "state_sha256": sha256(Path(scene["state"]))} for scene in scenes]}
     rows = []
     try:
-        for scene, minimap, hd, scale, trial in itertools.product(
-                scenes, (False, True), (False, True), args.scales,
-                range(1, args.repetitions + 1)):
-            row = run_case(args, scene, minimap, hd, scale, trial, args.output)
-            rows.append(row)
-            print(f"{row['scene']} mini={int(minimap)} hd={int(hd)} {scale}x "
-                  f"trial={trial}: {row['status']} "
-                  f"{row['unique_fps'] or row['error']}", flush=True)
-            with (args.output / "results.csv").open("w", newline="", encoding="utf-8") as target:
-                writer = csv.DictWriter(target, fieldnames=FIELDS)
-                writer.writeheader()
-                writer.writerows(rows)
-            summary = summarize(rows, args.repetitions)
-            with (args.output / "summary.csv").open("w", newline="", encoding="utf-8") as target:
-                writer = csv.DictWriter(target, fieldnames=SUMMARY_FIELDS)
-                writer.writeheader()
-                writer.writerows(summary)
-            (args.output / "results.json").write_text(
-                json.dumps({"metadata": metadata, "runs": rows, "summary": summary}, indent=2) + "\n",
-                encoding="utf-8")
+        configurations = list(itertools.product((False, True), (False, True), args.scales))
+        for scene in scenes:
+            for trial in range(1, args.repetitions + 1):
+                # Reverse every other pass so scale and mod order do not always
+                # coincide with thermal drift on long sweeps.
+                ordered = configurations if trial % 2 else reversed(configurations)
+                for minimap, hd, scale in ordered:
+                    row = run_case(args, scene, minimap, hd, scale, trial, args.output)
+                    rows.append(row)
+                    print(f"{row['scene']} mini={int(minimap)} hd={int(hd)} {scale}x "
+                          f"trial={trial}: {row['status']} "
+                          f"{row['unique_fps'] or row['error']}", flush=True)
+                    with (args.output / "results.csv").open("w", newline="", encoding="utf-8") as target:
+                        writer = csv.DictWriter(target, fieldnames=FIELDS)
+                        writer.writeheader()
+                        writer.writerows(rows)
+                    summary = summarize(rows, args.repetitions)
+                    with (args.output / "summary.csv").open("w", newline="", encoding="utf-8") as target:
+                        writer = csv.DictWriter(target, fieldnames=SUMMARY_FIELDS)
+                        writer.writeheader()
+                        writer.writerows(summary)
+                    (args.output / "results.json").write_text(
+                        json.dumps({"metadata": metadata, "runs": rows, "summary": summary}, indent=2) + "\n",
+                        encoding="utf-8")
     except KeyboardInterrupt:
         print("interrupted; completed rows preserved", file=sys.stderr)
         return 130
