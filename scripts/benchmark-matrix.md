@@ -48,6 +48,14 @@ fill the host disk; the effective config, logs, and measurements remain.
 On macOS, keep the desktop unlocked and lid open. The runner rejects locked
 desktop measurements and stops the sweep if the screen locks.
 
+Status snapshots older than one second, implausibly future-dated, or replaced
+during a read are rejected. The start waits for a fresh snapshot; an invalid or
+stale snapshot during measurement fails the case instead of reporting inflated
+FPS. `measurement-samples.json` preserves the accepted start, each measured
+sample, snapshot age/mtime, and rejected samples for diagnosis. This is a
+status-sampled throughput measurement, not a GPU frametime profiler. Earlier
+results lacking freshness checks must not be treated as validated timings.
+
 `results.csv` and `results.json` contain one row per trial. `summary.csv` and the
 JSON summary contain medians only when all required trials passed. `status=failed`
 and a nonzero exit code identify failed runs; failures do not become zero-FPS

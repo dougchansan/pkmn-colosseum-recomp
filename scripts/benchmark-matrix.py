@@ -70,13 +70,24 @@ def ensure_desktop_available():
 
 def read_status(path):
     try:
+        before = path.stat()
         values = dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
                       if "=" in line)
+        after = path.stat()
+        # Status is normally published every 200 ms. Never measure from a stale
+        # snapshot or a file replaced while we were reading it.
+        if (before.st_ino, before.st_mtime_ns, before.st_size) != (
+                after.st_ino, after.st_mtime_ns, after.st_size):
+            return None
+        age = time.time() - after.st_mtime
+        if age < -1 or age > 1:
+            return None
         if values.get("booted") != "1":
             return None
         return {key: float(values[key]) for key in ("fps", "vps", "speed")} | {
             "frame_count": int(values["frame_count"]), "state": values.get("state", ""),
-            "last_error": values.get("last_error", "")}
+            "last_error": values.get("last_error", ""),
+            "status_mtime_ns": after.st_mtime_ns, "status_age_s": age}
     except (OSError, ValueError, KeyError):
         return None
 
@@ -145,6 +156,7 @@ def run_case(args, scene, minimap, hd, scale, trial, outdir):
                hd_pack=int(hd), scale=scale, trial=trial, status="failed",
                log=str(outdir / name / "runner.log"))
     process = None
+    measurement_trace = []
     try:
         user, mod_dir = prepare_case(outdir / name, scale, minimap, hd,
                                      args.hd_pack, args.mods_dir, args.backend, args.base_mod)
@@ -166,12 +178,15 @@ def run_case(args, scene, minimap, hd, scale, trial, outdir):
             ensure_desktop_available()
             start = wait_status(status_path, process, time.monotonic() + 5)
             start_time = time.monotonic()
+            measurement_trace.append({"elapsed_s": 0.0, "status": start})
             samples = []
             while time.monotonic() - start_time < args.duration:
                 if process.poll() is not None:
                     raise RuntimeError(f"runner exited during measurement ({process.returncode})")
                 time.sleep(min(1, max(0.05, args.duration - (time.monotonic() - start_time))))
                 value = read_status(status_path)
+                measurement_trace.append({"elapsed_s": time.monotonic() - start_time,
+                                          "status": value})
                 if value is None or value["last_error"] or value["state"] in ("stopped", "error"):
                     raise RuntimeError("invalid runner status during measurement")
                 samples.append(value)
@@ -206,6 +221,13 @@ def run_case(args, scene, minimap, hd, scale, trial, outdir):
         # profile. Keep the effective config and logs, then remove only this
         # case's generated profile before starting the next of hundreds of runs.
         case_dir = outdir / name
+        if case_dir.is_dir():
+            try:
+                (case_dir / "measurement-samples.json").write_text(
+                    json.dumps(measurement_trace, indent=2) + "\n", encoding="utf-8")
+            except OSError as exc:
+                row["status"] = "failed"
+                row["error"] = f"could not preserve measurement trace: {exc}"
         user_dir = case_dir / "user"
         if user_dir.is_dir() and not user_dir.is_symlink():
             try:
