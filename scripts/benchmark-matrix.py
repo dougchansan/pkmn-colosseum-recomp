@@ -71,12 +71,15 @@ def ensure_desktop_available():
 
 def read_status(path):
     try:
-        before = path.stat()
-        values = dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
-                      if "=" in line)
-        after = path.stat()
+        # Bind contents and timestamps to one opened snapshot. A publisher may
+        # atomically replace the pathname while this descriptor remains valid.
+        with path.open(encoding="utf-8") as source:
+            before = os.fstat(source.fileno())
+            contents = source.read()
+            after = os.fstat(source.fileno())
+        values = dict(line.split("=", 1) for line in contents.splitlines() if "=" in line)
         # Status is normally published every 200 ms. Never measure from a stale
-        # snapshot or a file replaced while we were reading it.
+        # snapshot or an inode modified in place while we were reading it.
         if (before.st_ino, before.st_mtime_ns, before.st_size) != (
                 after.st_ino, after.st_mtime_ns, after.st_size):
             return None

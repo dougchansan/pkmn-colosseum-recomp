@@ -68,7 +68,7 @@ class StatusFreshnessTests(unittest.TestCase):
             os.utime(path, (future, future))
             self.assertIsNone(matrix.read_status(path))
 
-    def test_replaced_snapshot_rejected(self):
+    def test_modified_open_snapshot_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'status.txt'
             path.write_text('booted=1\nfps=60\nvps=60\nspeed=1\nframe_count=1\n')
@@ -76,8 +76,15 @@ class StatusFreshnessTests(unittest.TestCase):
             changed = SimpleNamespace(st_ino=initial.st_ino + 1,
                                       st_mtime_ns=initial.st_mtime_ns,
                                       st_size=initial.st_size)
-            with patch.object(Path, 'stat', side_effect=[initial, changed]):
+            with patch.object(matrix.os, 'fstat', side_effect=[initial, changed]):
                 self.assertIsNone(matrix.read_status(path))
+
+    def test_snapshot_metadata_comes_from_open_descriptor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'status.txt'
+            path.write_text('booted=1\nfps=60\nvps=60\nspeed=1\nframe_count=7\n')
+            with patch.object(Path, 'stat', side_effect=AssertionError('pathname may have been replaced')):
+                self.assertEqual(matrix.read_status(path)['frame_count'], 7)
 
 
 if __name__ == '__main__':

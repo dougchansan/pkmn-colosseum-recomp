@@ -48,8 +48,10 @@ fill the host disk; the effective config, logs, and measurements remain.
 On macOS, keep the desktop unlocked and lid open. The runner rejects locked
 desktop measurements and stops the sweep if the screen locks.
 
-Status snapshots older than one second, implausibly future-dated, or replaced
-during a read are rejected. The start waits for a fresh snapshot; an invalid or
+Status snapshots older than one second, implausibly future-dated, or modified
+in place during a read are rejected. Contents and timestamps come from one
+opened file, so atomic pathname replacement does not reject a valid snapshot.
+The start waits for a fresh snapshot; an invalid or
 stale snapshot during measurement fails the case instead of reporting inflated
 FPS. `measurement-samples.json` preserves the accepted start, each measured
 sample, snapshot age/mtime, and rejected samples for diagnosis. This is a
