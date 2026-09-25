@@ -19,6 +19,7 @@ import socket
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 from datetime import datetime, timezone
@@ -156,12 +157,18 @@ def run_case(args, scene, minimap, hd, scale, trial, outdir):
                hd_pack=int(hd), scale=scale, trial=trial, status="failed",
                log=str(outdir / name / "runner.log"))
     process = None
+    telemetry_temp = None
     measurement_trace = []
     try:
         user, mod_dir = prepare_case(outdir / name, scale, minimap, hd,
                                      args.hd_pack, args.mods_dir, args.backend, args.base_mod)
         automation = outdir / name / "automation"
-        automation.mkdir()
+        if getattr(args, "telemetry_root", None):
+            telemetry_temp = tempfile.TemporaryDirectory(
+                prefix="moderngekko-telemetry-", dir=args.telemetry_root)
+            automation = Path(telemetry_temp.name)
+        else:
+            automation.mkdir()
         command = [str(args.runner), "--game", str(args.game), "--module", str(args.module),
                    "--user-dir", str(user), "--load-state", scene["state"],
                    "--automation-dir", str(automation), "--graphics", args.backend,
@@ -221,6 +228,14 @@ def run_case(args, scene, minimap, hd, scale, trial, outdir):
         # profile. Keep the effective config and logs, then remove only this
         # case's generated profile before starting the next of hundreds of runs.
         case_dir = outdir / name
+        if telemetry_temp is not None:
+            try:
+                shutil.copytree(telemetry_temp.name, case_dir / "automation")
+            except OSError as exc:
+                row["status"] = "failed"
+                row["error"] = f"could not preserve telemetry: {exc}"
+            finally:
+                telemetry_temp.cleanup()
         if case_dir.is_dir():
             try:
                 (case_dir / "measurement-samples.json").write_text(
@@ -276,11 +291,15 @@ def main():
     parser.add_argument("--duration", type=float, default=30)
     parser.add_argument("--warmup", type=float, default=10)
     parser.add_argument("--boot-timeout", type=float, default=120)
+    parser.add_argument("--telemetry-root", type=Path,
+                        help="existing fast temporary directory, e.g. /dev/shm; telemetry is archived per case")
     parser.add_argument("--scales", type=int, nargs="+", default=list(range(1, 7)))
     parser.add_argument("--only-scene", action="append")
     parser.add_argument("--base-mod", action="append", default=[],
                         help="package directory name to include in every arm")
     args = parser.parse_args()
+    if args.telemetry_root is not None and not args.telemetry_root.is_dir():
+        parser.error("telemetry-root must be an existing directory")
     if not args.scales or any(x < 1 or x > 6 for x in args.scales):
         parser.error("scales must be between 1 and 6")
     if args.repetitions < 1:
@@ -346,6 +365,7 @@ def main():
                 "module_sha256": sha256(args.module), "hd_pack_sha256": sha256(args.hd_pack),
                 "backend": args.backend, "duration_s": args.duration,
                 "warmup_s": args.warmup, "boot_timeout_s": args.boot_timeout,
+                "telemetry_root": str(args.telemetry_root.resolve()) if args.telemetry_root else None,
                 "scales": args.scales, "repetitions": args.repetitions,
                 "base_mods": args.base_mod,
                 "scene_source": str((args.manifest or args.states_dir).resolve()),

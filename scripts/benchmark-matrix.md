@@ -56,6 +56,13 @@ sample, snapshot age/mtime, and rejected samples for diagnosis. This is a
 status-sampled throughput measurement, not a GPU frametime profiler. Earlier
 results lacking freshness checks must not be treated as validated timings.
 
+On a host where disk latency stalls status publication, `--telemetry-root /dev/shm`
+can isolate the small telemetry files on an existing memory-backed directory.
+It does not move the game or HD pack. Each case uses a unique temporary directory;
+after the runner exits its telemetry is copied into the case evidence directory
+before that temporary directory is removed. The selected root is recorded in
+metadata and must be disclosed when comparing runs.
+
 `results.csv` and `results.json` contain one row per trial. `summary.csv` and the
 JSON summary contain medians only when all required trials passed. `status=failed`
 and a nonzero exit code identify failed runs; failures do not become zero-FPS

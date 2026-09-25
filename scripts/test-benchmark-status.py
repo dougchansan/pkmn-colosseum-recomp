@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location('matrix', Path(__file__).with_name('benchmark-matrix.py'))
@@ -14,6 +14,36 @@ spec.loader.exec_module(matrix)
 
 
 class StatusFreshnessTests(unittest.TestCase):
+    def test_temporary_telemetry_archived_and_cleaned_on_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fast = root / 'fast'
+            fast.mkdir()
+            args = SimpleNamespace(telemetry_root=fast, runner=root/'runner',
+                game=root/'game', module=root/'module', hd_pack=root/'pack',
+                mods_dir=root/'mods', backend='Vulkan', base_mod=[], boot_timeout=1)
+            def prepare(case, *unused):
+                user = case/'user'
+                user.mkdir(parents=True)
+                (user/'config.ini').write_text('test=true\n')
+                mods = case/'mods'
+                mods.mkdir()
+                return user, mods
+            def launch(command, **unused):
+                telemetry = Path(command[command.index('--automation-dir')+1])
+                self.assertEqual(telemetry.parent, fast)
+                (telemetry/'status.txt').write_text('test evidence')
+                return Mock(poll=lambda: 0)
+            with patch.object(matrix, 'prepare_case', side_effect=prepare), \
+                 patch.object(matrix.subprocess, 'Popen', side_effect=launch), \
+                 patch.object(matrix, 'wait_status', side_effect=RuntimeError('test stop')):
+                result = matrix.run_case(args, {'name':'test','state':'test.sav'},
+                                         False, False, 1, 1, root/'out')
+            case = root/'out/test-mini0-hd0-1x-trial1'
+            self.assertEqual(result['status'], 'failed')
+            self.assertEqual((case/'automation/status.txt').read_text(), 'test evidence')
+            self.assertEqual(list(fast.iterdir()), [])
+
     def test_fresh_and_stale_snapshots(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'status.txt'
