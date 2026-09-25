@@ -12,6 +12,7 @@ import itertools
 import json
 import os
 import platform
+import plistlib
 import re
 import shutil
 import socket
@@ -45,6 +46,26 @@ def source_commit():
     result = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=False)
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def ensure_desktop_available():
+    if platform.system() != "Darwin":
+        return
+    try:
+        probe = subprocess.run(["/usr/sbin/ioreg", "-n", "Root", "-d1", "-a"],
+                               capture_output=True, timeout=10, check=True)
+        session = plistlib.loads(probe.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"cannot verify Mac desktop lock state: {exc}") from exc
+    def locked(value):
+        if isinstance(value, dict):
+            return value.get("CGSSessionScreenIsLocked") is True or any(
+                locked(child) for child in value.values())
+        if isinstance(value, list):
+            return any(locked(child) for child in value)
+        return False
+    if locked(session):
+        raise RuntimeError("Mac desktop is locked; unlock it before windowed Metal measurements")
 
 
 def read_status(path):
@@ -142,6 +163,7 @@ def run_case(args, scene, minimap, hd, scale, trial, outdir):
             wait_status(status_path, process, time.monotonic() + args.boot_timeout,
                         first["frame_count"])
             time.sleep(args.warmup)
+            ensure_desktop_available()
             start = wait_status(status_path, process, time.monotonic() + 5)
             start_time = time.monotonic()
             samples = []
@@ -154,6 +176,7 @@ def run_case(args, scene, minimap, hd, scale, trial, outdir):
                     raise RuntimeError("invalid runner status during measurement")
                 samples.append(value)
             end_time = time.monotonic()
+            ensure_desktop_available()
             end = samples[-1]
             if hd and "community HD texture pack unavailable" in Path(row["log"]).read_text(
                     encoding="utf-8", errors="replace"):
@@ -315,6 +338,7 @@ def main():
                 # coincide with thermal drift on long sweeps.
                 ordered = configurations if trial % 2 else reversed(configurations)
                 for minimap, hd, scale in ordered:
+                    ensure_desktop_available()
                     row = run_case(args, scene, minimap, hd, scale, trial, args.output)
                     rows.append(row)
                     print(f"{row['scene']} mini={int(minimap)} hd={int(hd)} {scale}x "
@@ -335,6 +359,9 @@ def main():
     except KeyboardInterrupt:
         print("interrupted; completed rows preserved", file=sys.stderr)
         return 130
+    except RuntimeError as exc:
+        print(f"benchmark stopped: {exc}; completed rows preserved", file=sys.stderr)
+        return 2
     return 1 if any(r["status"] != "ok" for r in rows) else 0
 
 

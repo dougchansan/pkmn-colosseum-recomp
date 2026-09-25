@@ -45,6 +45,8 @@ pokemon-colosseum-ultrawide.mgm` if the same non-minimap package should run in
 every arm. Each case uses a fresh user directory and an explicit mod directory.
 The generated user directory is removed after each run so the HD pack cannot
 fill the host disk; the effective config, logs, and measurements remain.
+On macOS, keep the desktop unlocked and lid open. The runner rejects locked
+desktop measurements and stops the sweep if the screen locks.
 
 `results.csv` and `results.json` contain one row per trial. `summary.csv` and the
 JSON summary contain medians only when all required trials passed. `status=failed`
