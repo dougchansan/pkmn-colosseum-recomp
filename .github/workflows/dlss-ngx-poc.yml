@@ -1,0 +1,64 @@
+name: DLSS NGX Linux PoC
+
+on:
+  push:
+    branches: [feature/dlss-ngx-vulkan-poc]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-ngx-host:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build cmake clang python3 \
+            libevdev-dev libudev-dev libsystemd-dev \
+            libxi-dev libxrandr-dev libxkbcommon-dev \
+            libgl1-mesa-dev libegl-dev libasound2-dev libpulse-dev \
+            libbluetooth-dev libcurl4-openssl-dev libusb-1.0-0-dev \
+            libgtk-3-dev
+
+      - name: Apply Colosseum host patches
+        run: sh mods/host-patches/apply-host-patches.sh "$GITHUB_WORKSPACE/lib/ModernGekko"
+
+      - name: Apply pinned NGX Vulkan overlay
+        run: sh mods/host-patches/apply-dlss-ngx-poc.sh "$GITHUB_WORKSPACE/lib/ModernGekko"
+
+      - name: Fetch NVIDIA DLSS SDK
+        run: git clone --depth 1 https://github.com/NVIDIA/DLSS.git "$RUNNER_TEMP/NVIDIA-DLSS"
+
+      - name: Configure Colosseum ModernGekko host with NGX
+        run: |
+          cmake -S lib/ModernGekko -B build/dlss-host -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            '-DMODERNGEKKO_FRONTEND_NAME=Pokemon Colosseum Recomp' \
+            -DMODERNGEKKO_LAUNCHER_OUTPUT_NAME=PokemonColosseumRecomp \
+            -DMODERNGEKKO_RUNNER_OUTPUT_NAME=moderngekko-run \
+            -DMODERNGEKKO_USER_DIRECTORY_NAME=PokemonColosseumRecomp \
+            -DMODERNGEKKO_REQUIRED_DISC_ID=GC6E01 \
+            '-DMODERNGEKKO_DEFAULT_WINDOW_TITLE=Pokemon Colosseum Recomp' \
+            -DMODERNGEKKO_LOG_FILENAME=PokemonColosseumRecomp.log \
+            "-DMODERNGEKKO_DOL_PATCH_MANIFEST=$GITHUB_WORKSPACE/patches/GC6E01-native-widescreen.csv" \
+            -DMODERNGEKKO_PORTABLE_DEFAULT_GAME=ON \
+            -DMODERNGEKKO_PORTABLE_USER_DIRECTORY=ON \
+            -DMODERNGEKKO_GAMECUBE_CONTROLLERS=ON \
+            -DMODERNGEKKO_ENABLE_NGX=ON \
+            "-DMODERNGEKKO_NGX_SDK_ROOT=$RUNNER_TEMP/NVIDIA-DLSS" \
+            -DMODERNGEKKO_NGX_PROJECT_ID=6dcb2b20-dcf8-4b79-a5ea-d7c50e3eefc8
+
+      - name: Build Colosseum runner and launcher
+        run: >
+          cmake --build build/dlss-host --parallel 4
+          --target moderngekko-launcher moderngekko-run
