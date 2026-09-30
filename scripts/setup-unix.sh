@@ -51,6 +51,18 @@ if [ ! -f "$MODERNGEKKO/CMakeLists.txt" ]; then
 fi
 sh "$ROOT/mods/host-patches/apply-host-patches.sh" "$MODERNGEKKO"
 
+# The DLSS proof of concept is opt-in. Point MODERNGEKKO_NGX_SDK_ROOT at a
+# local checkout of NVIDIA's public DLSS SDK to apply the Vulkan NGX overlay
+# and enable it in the ModernGekko build. With the variable unset, this branch
+# builds the same host path as the normal release.
+if [ -n "${MODERNGEKKO_NGX_SDK_ROOT:-}" ]; then
+    [ -f "$MODERNGEKKO_NGX_SDK_ROOT/include/nvsdk_ngx_vk.h" ] || {
+        echo "NVIDIA DLSS SDK not found at MODERNGEKKO_NGX_SDK_ROOT=$MODERNGEKKO_NGX_SDK_ROOT" >&2
+        exit 1
+    }
+    sh "$ROOT/mods/host-patches/apply-dlss-ngx-poc.sh" "$MODERNGEKKO"
+fi
+
 cmake -S "$DOLRECOMP" -B "$DOL_BUILD" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DDOLRECOMP_ENABLE_LLVM=OFF
 cmake --build "$DOL_BUILD" --parallel "$JOBS" --target dolrecomp
@@ -64,7 +76,7 @@ fi
     exit 1
 }
 
-cmake -S "$MODERNGEKKO" -B "$MG_BUILD" -G Ninja \
+set -- -S "$MODERNGEKKO" -B "$MG_BUILD" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
     '-DMODERNGEKKO_FRONTEND_NAME=Pokemon Colosseum Recomp' \
     -DMODERNGEKKO_LAUNCHER_OUTPUT_NAME=PokemonColosseumRecomp \
@@ -80,6 +92,14 @@ cmake -S "$MODERNGEKKO" -B "$MG_BUILD" -G Ninja \
     '-DMODERNGEKKO_NATIVE_ULTRAWIDE_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-ultrawide.mgm' \
     '-DMODERNGEKKO_TEXT_UPSCALE_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-hd-text.mgm' \
     '-DMODERNGEKKO_MINIMAP_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-minimap.mgm'
+if [ -n "${MODERNGEKKO_NGX_SDK_ROOT:-}" ]; then
+    NGX_PROJECT_ID=${MODERNGEKKO_NGX_PROJECT_ID:-6dcb2b20-dcf8-4b79-a5ea-d7c50e3eefc8}
+    set -- "$@" \
+        -DMODERNGEKKO_ENABLE_NGX=ON \
+        "-DMODERNGEKKO_NGX_SDK_ROOT=$MODERNGEKKO_NGX_SDK_ROOT" \
+        "-DMODERNGEKKO_NGX_PROJECT_ID=$NGX_PROJECT_ID"
+fi
+cmake "$@"
 cmake --build "$MG_BUILD" --parallel "$JOBS" \
     --target moderngekko-launcher moderngekko-run moderngekko-port
 
