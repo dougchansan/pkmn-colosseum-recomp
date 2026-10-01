@@ -128,7 +128,6 @@ index 71916b7..924dd3c 100644
  /database/titles.txt
  /extern/wit/
 +*.orig
-warning: in the working copy of 'CMakeLists.txt', LF will be replaced by CRLF the next time Git touches it
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index bedf947..ead2ae0 100644
 --- a/CMakeLists.txt
@@ -494,7 +493,7 @@ index af75a25..53c28db 100644
  
  enum class RuntimeErrorCode
 diff --git a/src/runtime/dolphin_runtime.cpp b/src/runtime/dolphin_runtime.cpp
-index 981e098..633d682 100644
+index 981e098..cdeafae 100644
 --- a/src/runtime/dolphin_runtime.cpp
 +++ b/src/runtime/dolphin_runtime.cpp
 @@ -1,40 +1,76 @@
@@ -574,7 +573,7 @@ index 981e098..633d682 100644
  
  namespace {
  static_assert(sizeof(ModernGekkoModuleDesc) == sizeof(StaticRecompModuleDesc));
-@@ -50,41 +86,2159 @@ std::unique_ptr<BootSessionData> s_boot_session_data;
+@@ -50,41 +86,2160 @@ std::unique_ptr<BootSessionData> s_boot_session_data;
  u64 s_previous_net_wait_ns = 0;
  double s_net_wait_ms_per_second = 0.0;
  std::chrono::steady_clock::time_point s_previous_net_wait_sample;
@@ -709,6 +708,7 @@ index 981e098..633d682 100644
 +  std::atomic<std::uint64_t> presentation_transitions{0};
 +  bool field_overlay_session_active = false;
 +  bool battle_gameplay_session_active = false;
++  unsigned int battle_now_arena_room = 0;
 +  int battle_gameplay_message_fields = 0;
 +  int battle_now_hold_fields = 0;
 +  int front_end_dismiss_hold_fields = 0;
@@ -2765,7 +2765,7 @@ index 981e098..633d682 100644
  
  std::vector<std::string> Host_GetPreferredLocales() { return {}; }
  void Host_PPCSymbolsChanged() {}
-@@ -139,12 +2293,725 @@ struct Runtime::Impl {
+@@ -139,12 +2294,725 @@ struct Runtime::Impl {
    std::unique_ptr<Platform> platform;
    std::unique_ptr<ModManager> mods;
    Common::EventHook state_hook;
@@ -3491,7 +3491,7 @@ index 981e098..633d682 100644
  namespace detail {
  void SetExternalUICommon(bool external) {
    std::lock_guard lock(s_runtime_mutex);
-@@ -234,12 +3101,39 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -234,12 +3102,39 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    for (const LoadedModInfo &mod : mod_report.loaded)
      std::fprintf(stderr, "mod loaded: %s %s\n", mod.id.c_str(),
                   mod.version.c_str());
@@ -3531,7 +3531,7 @@ index 981e098..633d682 100644
    Config::SetBase(Config::MAIN_FULLSCREEN, impl->config.fullscreen);
  
    if (impl->config.headless)
-@@ -280,6 +3174,26 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -280,6 +3175,26 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    if (impl->config.graphics.internal_resolution_scale)
      Config::SetBase(Config::GFX_EFB_SCALE,
                      *impl->config.graphics.internal_resolution_scale);
@@ -3558,7 +3558,7 @@ index 981e098..633d682 100644
    Config::SetBase(Config::GFX_SHADER_CACHE, true);
    Config::SetBase(Config::GFX_SHADER_COMPILATION_MODE,
                    ShaderCompilationMode::AsynchronousUberShaders);
-@@ -303,6 +3217,12 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -303,6 +3218,12 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    Config::SetBase(Config::MAIN_AUDIO_BACKEND, impl->config.audio.backend);
    Config::SetBase(Config::MAIN_INPUT_BACKGROUND_INPUT,
                    impl->config.input.background_input);
@@ -3571,7 +3571,7 @@ index 981e098..633d682 100644
  
    auto &jit = Core::System::GetInstance().GetJitInterface();
    StaticRecompModuleSource recomp_source;
-@@ -331,11 +3251,25 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -331,11 +3252,25 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
  
  Runtime::~Runtime() {
    RequestStop();
@@ -3597,7 +3597,7 @@ index 981e098..633d682 100644
    if (m_impl->controllers_initialized)
      UICommon::ShutdownControllers();
    if (m_impl->ui_initialized)
-@@ -359,6 +3293,13 @@ RuntimeRunResult Runtime::Run() {
+@@ -359,6 +3294,13 @@ RuntimeRunResult Runtime::Run() {
      if (s_boot_session_data)
        boot = BootParameters::GenerateFromFile(
            m_impl->metadata.main_dol.string(), std::move(*s_boot_session_data));
@@ -3611,7 +3611,7 @@ index 981e098..633d682 100644
      else
        boot =
            BootParameters::GenerateFromFile(m_impl->metadata.main_dol.string());
-@@ -370,19 +3311,779 @@ RuntimeRunResult Runtime::Run() {
+@@ -370,19 +3312,795 @@ RuntimeRunResult Runtime::Run() {
              RuntimeError{RuntimeErrorCode::BootFailed,
                           "Dolphin rejected the extracted disc"}};
    }
@@ -4103,11 +4103,27 @@ index 981e098..633d682 100644
 +            std::lock_guard lock(m_impl->navigation_overlay.mutex);
 +            battle_field_archive = automation::IsColosseumBattleFieldArchive(
 +                m_impl->navigation_overlay.collision_archive_name);
++            auto& overlay = m_impl->navigation_overlay;
++            const unsigned int current_room = memory.Read_U8(room_id_address);
++            if (automation::IsColosseumBattleNowArenaArchive(overlay.collision_archive_name) &&
++                overlay.collision_room_id == current_room)
++              overlay.battle_now_arena_room = current_room;
++            if (battle_now_observed || character_naming_active || movie_active ||
++                !automation::ShouldRetainColosseumBattleNowArena(
++                    overlay.battle_now_arena_room, current_room, valid))
++              overlay.battle_now_arena_room = 0;
++            // PKMN temporarily tears down navigation/collision data, without
++            // changing the actual arena. Preserve its positive identity until
++            // the guest changes rooms, rather than treating that gap as a field.
++            battle_field_archive = battle_field_archive ||
++                automation::ShouldRetainColosseumBattleNowArena(
++                    overlay.battle_now_arena_room, current_room, valid);
 +          }
 +          m_impl->navigation_overlay.battle_gameplay_session_active =
 +              automation::ResolveColosseumBattleGameplaySession(
 +                  m_impl->navigation_overlay.battle_gameplay_session_active,
-+                  battle_now_active, battle_gameplay_message, valid,
++                  battle_now_active && (!battle_field_archive || battle_now_observed),
++                  battle_gameplay_message, valid,
 +                  character_naming_active, movie_active, battle_field_archive);
 +          const bool battle_gameplay_active =
 +              m_impl->navigation_overlay.battle_gameplay_session_active;
@@ -4116,7 +4132,7 @@ index 981e098..633d682 100644
 +                  complete_menu_active, valid, character_naming_active,
 +                  m_impl->navigation_overlay.ultrawide_gameplay_started.load(
 +                      std::memory_order_relaxed),
-+                  battle_gameplay_active);
++                  battle_gameplay_active, battle_now_active);
 +          // Despite the Config key's name, GFX_WIDESCREEN_AUTHORED_MENU is
 +          // deliberately naming-only. It drives two things: the model
 +          // projection scale in VertexShaderManager, which must not touch
@@ -4391,7 +4407,7 @@ index 981e098..633d682 100644
    std::jthread title_thread;
    if (!m_impl->config.headless && m_impl->config.show_fps_in_title) {
      title_thread = std::jthread([](std::stop_token stop_token) {
-@@ -394,14 +4095,30 @@ RuntimeRunResult Runtime::Run() {
+@@ -394,14 +4112,30 @@ RuntimeRunResult Runtime::Run() {
      });
    }
    m_impl->platform->MainLoop();
@@ -4592,10 +4608,10 @@ index 0000000..d7ff926
 +}  // namespace moderngekko
 diff --git a/tests/automation_protocol_test.cpp b/tests/automation_protocol_test.cpp
 new file mode 100644
-index 0000000..90b0c63
+index 0000000..f382fa8
 --- /dev/null
 +++ b/tests/automation_protocol_test.cpp
-@@ -0,0 +1,460 @@
+@@ -0,0 +1,481 @@
 +#include "automation_protocol.hpp"
 +
 +#include <filesystem>
@@ -4756,6 +4772,12 @@ index 0000000..90b0c63
 +      // battle_now parameter left to pin them to the authored canvas.
 +      automation::ShouldUseColosseumAuthoredMenuPresentation(
 +          true, true, false, true, true) ||
++      !automation::ShouldUseColosseumAuthoredMenuPresentation(
++          false, false, false, true, false, true) ||
++      !automation::ShouldUseColosseumAuthoredMenuPresentation(
++          false, true, false, true, false, true) ||
++      automation::ShouldUseColosseumAuthoredMenuPresentation(
++          true, true, false, true, true, true) ||
 +      !automation::ResolveColosseumBattleGameplaySession(
 +          false, false, true, false, false, false) ||
 +      !automation::ResolveColosseumBattleGameplaySession(
@@ -4800,6 +4822,21 @@ index 0000000..90b0c63
 +      automation::IsColosseumBattleGameplayMessage(0x0067u) ||
 +      automation::IsColosseumBattleGameplayMessage(0x019fu) ||
 +      !automation::IsColosseumBattleFieldArchive("M1_out_bf") ||
++      !automation::IsColosseumBattleFieldArchive("M1_water_colo") ||
++      !automation::ShouldRetainColosseumBattleNowArena(0x97, 0x97) ||
++      !automation::ShouldRetainColosseumBattleNowArena(0x97, 0) ||
++      !automation::ShouldRetainColosseumBattleNowArena(0x97, 0xa1, false) ||
++      automation::ShouldRetainColosseumBattleNowArena(0x97, 0xa1) ||
++      automation::ShouldRetainColosseumBattleNowArena(0, 0) ||
++      automation::IsColosseumBattleNowArenaArchive("M1_out_bf") ||
++      !automation::IsColosseumBattleFieldArchive("M2_earth_colo") ||
++      !automation::IsColosseumBattleFieldArchive("M4_bottom_colo") ||
++      !automation::IsColosseumBattleFieldArchive("M4_cylinder_colo") ||
++      !automation::IsColosseumBattleFieldArchive("T1_ancient_colo") ||
++      automation::IsColosseumBattleFieldArchive("D2_crater_colo") ||
++      automation::IsColosseumBattleFieldArchive("D4_casino_colo") ||
++      !automation::ResolveColosseumBattleGameplaySession(
++          false, false, false, true, false, false, true) ||
 +      automation::IsColosseumBattleFieldArchive("M1_out") ||
 +      automation::IsColosseumBattleFieldArchive("S1_out") ||
 +      automation::IsColosseumBattleFieldArchive("") ||
@@ -5318,7 +5355,6 @@ index 0000000..b952a67
 +
 +  return 0;
 +}
-warning: in the working copy of 'tests/frontend_config_test.cpp', LF will be replaced by CRLF the next time Git touches it
 diff --git a/tests/frontend_config_test.cpp b/tests/frontend_config_test.cpp
 index 6bb9e0e..d109c11 100644
 --- a/tests/frontend_config_test.cpp
@@ -5615,6 +5651,19 @@ index 0000000..c97b31c
 +  fs::remove_all(root, ec);
 +  return 0;
 +}
+diff --git a/tests/runtime_test.cpp b/tests/runtime_test.cpp
+index 582879c..ca211d3 100644
+--- a/tests/runtime_test.cpp
++++ b/tests/runtime_test.cpp
+@@ -4,7 +4,7 @@
+ 
+ int main()
+ {
+-  static_assert(sizeof(CPUState) == 3528u);
++  static_assert(sizeof(CPUState) == 3536u);
+ 
+   moderngekko::LegacyRuntime runtime(true);
+   const moderngekko::ModuleLoadResult loaded =
 diff --git a/tools/automation_protocol.cpp b/tools/automation_protocol.cpp
 new file mode 100644
 index 0000000..e4c3e0a
@@ -6175,10 +6224,10 @@ index 0000000..e4c3e0a
 +}  // namespace moderngekko::automation
 diff --git a/tools/automation_protocol.hpp b/tools/automation_protocol.hpp
 new file mode 100644
-index 0000000..c1edd6f
+index 0000000..42600e8
 --- /dev/null
 +++ b/tools/automation_protocol.hpp
-@@ -0,0 +1,452 @@
+@@ -0,0 +1,471 @@
 +#pragma once
 +
 +#include "InputCommon/ControllerInterface/Touch/InputOverrider.h"
@@ -6402,12 +6451,30 @@ index 0000000..c1edd6f
 +}
 +
 +// Whether the loaded collision archive is a battle field rather than a walkable
-+// area. Colosseum names them with a _bf suffix - M1_out is the Phenac overworld,
-+// M1_out_bf the battle field it fights on - so the suffix is a positive signal
-+// that a battle is staged here, which absence of navigation data is not.
++// area. Story encounters use _bf. Standalone Battle Now also uses the five
++// dedicated colosseum scenes below, whose navigation table remains valid.
++// Do not match every _colo name: the crater/casino walking maps have _bf arenas.
++constexpr bool IsColosseumBattleNowArenaArchive(std::string_view archive)
++{
++  return archive == "M1_water_colo" || archive == "M2_earth_colo" ||
++         archive == "M4_bottom_colo" || archive == "M4_cylinder_colo" ||
++         archive == "T1_ancient_colo";
++}
++
 +constexpr bool IsColosseumBattleFieldArchive(std::string_view archive)
 +{
-+  return archive.size() > 3 && archive.substr(archive.size() - 3) == "_bf";
++  return (archive.size() > 3 && archive.substr(archive.size() - 3) == "_bf") ||
++         IsColosseumBattleNowArenaArchive(archive);
++}
++
++constexpr bool ShouldRetainColosseumBattleNowArena(unsigned int arena_room,
++                                                  unsigned int current_room,
++                                                  bool navigation_valid = true)
++{
++  // Room zero and a missing actor table are transient during arena loading;
++  // neither is a confirmed transition back to a walking map.
++  return arena_room != 0 &&
++         (!navigation_valid || current_room == 0 || arena_room == current_room);
 +}
 +
 +constexpr bool ResolveColosseumBattleGameplaySession(
@@ -6430,7 +6497,10 @@ index 0000000..c1edd6f
 +  // out when the loaded area is somewhere you can walk.
 +  if (navigation_valid && !battle_field_archive)
 +    return false;
-+  return session_active || battle_gameplay_message;
++  // Standalone arenas are already battle scenes during their loading camera,
++  // before a trainer/command message is published. Their menus must not reset
++  // presentation while the navigation table remains alive.
++  return session_active || battle_gameplay_message || battle_field_archive;
 +}
 +
 +enum class ColosseumAuthoredBackdrop : std::uint8_t
@@ -6469,7 +6539,8 @@ index 0000000..c1edd6f
 +                                                           bool navigation_valid,
 +                                                           bool character_naming_active,
 +                                                           bool gameplay_started = false,
-+                                                           bool battle_gameplay_active = false)
++                                                           bool battle_gameplay_active = false,
++                                                           bool battle_now_menu_active = false)
 +{
 +  // Field submenus and the pre-field character naming scene are authored as
 +  // complete 4:3 canvases. Applying the Hor+ projection multiplier to the
@@ -6479,15 +6550,12 @@ index 0000000..c1edd6f
 +  // immediately after loading a savestate. Once gameplay has started, a complete
 +  // menu bit is sufficient evidence that the frame is an authored 4:3 canvas.
 +  //
-+  // The standalone Battle Now front-end used to be forced to 4:3 from its
-+  // message band. It is not: the OPTIONS screen, which is part of the same
-+  // front-end and was never in the band, presents Hor+ and its background
-+  // reaches the full width while the panels stay centred and correctly
-+  // proportioned. Mode select rendered the same way looks the same, so the
-+  // band no longer pins these screens to the authored canvas and they gain the
-+  // ultrawide backdrop the rest of the front-end already had.
++  // Battle Now's popup backing uses authored clipping while its border/text
++  // use the menu projection. Keep the whole setup canvas at its authored aspect
++  // so both agree. An identified arena takes precedence over menu overlays.
 +  return !battle_gameplay_active &&
-+         ((!navigation_valid && character_naming_active) ||
++         (battle_now_menu_active ||
++          (!navigation_valid && character_naming_active) ||
 +          (complete_menu_active && (navigation_valid || gameplay_started)));
 +}
 +
@@ -6695,7 +6763,6 @@ index f156b76..293c132 100644
  // Process-wide affinity can interfere with Dolphin's worker threads, so require
  // an exact, explicit opt-in instead of changing every launch by default.
  inline bool AffinityEnabled(const char* value)
-warning: in the working copy of 'tools/frontend_config.cpp', LF will be replaced by CRLF the next time Git touches it
 diff --git a/tools/frontend_config.cpp b/tools/frontend_config.cpp
 index 03740d4..30473e6 100644
 --- a/tools/frontend_config.cpp
@@ -6999,7 +7066,7 @@ index 0000000..e7b86b4
 +}
 +}  // namespace moderngekko::frontend
 diff --git a/tools/moderngekko_launcher.cpp b/tools/moderngekko_launcher.cpp
-index 7d821dd..9f42c8a 100644
+index 7d821dd..2412d0d 100644
 --- a/tools/moderngekko_launcher.cpp
 +++ b/tools/moderngekko_launcher.cpp
 @@ -1,6 +1,10 @@
@@ -7034,7 +7101,32 @@ index 7d821dd..9f42c8a 100644
  }
  
  fs::path DocumentsDirectory()
-@@ -499,8 +507,57 @@ fs::path SiblingRunner(const char* argv0)
+@@ -268,7 +276,24 @@ std::vector<fs::path> FindDiscImages()
+       std::ranges::transform(extension, extension.begin(),
+                              [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+       if (extension == ".wbfs" || extension == ".iso" || extension == ".rvz")
++      {
++#ifdef MODERNGEKKO_REQUIRED_DISC_ID
++        const std::unique_ptr<DiscIO::Volume> volume =
++            DiscIO::CreateVolume(iterator->path().string());
++        if (volume)
++        {
++          const std::string disc_id = volume->GetGameID(volume->GetGamePartition());
++          bool supported = disc_id == MODERNGEKKO_REQUIRED_DISC_ID;
++#ifdef MODERNGEKKO_ACCEPTED_SOURCE_DISC_ID
++          supported = supported || disc_id == MODERNGEKKO_ACCEPTED_SOURCE_DISC_ID;
++#endif
++          if (supported)
++            images.push_back(iterator->path());
++        }
++#else
+         images.push_back(iterator->path());
++#endif
++      }
+     }
+     iterator.increment(ec);
+     if (ec)
+@@ -499,8 +524,57 @@ fs::path SiblingRunner(const char* argv0)
  }
  } // namespace
  
@@ -7092,7 +7184,7 @@ index 7d821dd..9f42c8a 100644
    bool use_wayland = false;
    std::optional<fs::path> extract_only;
    for (int i = 1; i < argc; ++i)
-@@ -513,8 +570,8 @@ int main(int argc, char** argv)
+@@ -513,8 +587,8 @@ int main(int argc, char** argv)
        extract_only = argv[++i];
    }
  
@@ -7102,7 +7194,7 @@ index 7d821dd..9f42c8a 100644
    if (extract_only)
    {
      ExtractionState extraction;
-@@ -537,6 +594,10 @@ int main(int argc, char** argv)
+@@ -537,6 +611,10 @@ int main(int argc, char** argv)
                               config.error.c_str(), nullptr);
      return 2;
    }
@@ -7113,7 +7205,7 @@ index 7d821dd..9f42c8a 100644
  
  #if defined(__linux__)
    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, use_wayland ? "wayland" : "x11");
-@@ -546,8 +607,8 @@ int main(int argc, char** argv)
+@@ -546,8 +624,8 @@ int main(int argc, char** argv)
      return 1;
  
    const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
@@ -7124,7 +7216,7 @@ index 7d821dd..9f42c8a 100644
                                          SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
    if (!window)
    {
-@@ -616,6 +677,57 @@ int main(int argc, char** argv)
+@@ -616,6 +694,57 @@ int main(int argc, char** argv)
      if (config.graphics_backend == graphics_backends[i].value)
        graphics_backend_index = static_cast<int>(i);
    }
@@ -7182,7 +7274,7 @@ index 7d821dd..9f42c8a 100644
  
    DialogState dialog;
    std::vector<ControllerOption> controllers = EnumerateControllers();
-@@ -772,6 +884,40 @@ int main(int argc, char** argv)
+@@ -772,6 +901,40 @@ int main(int argc, char** argv)
      {
        ImGui::Text("Ready: %s [%s]", current_metadata.metadata->game_name.c_str(),
                    current_metadata.metadata->disc_id.c_str());
@@ -7223,7 +7315,7 @@ index 7d821dd..9f42c8a 100644
        if (ImGui::Button("Play", ImVec2(180 * scale, 42 * scale)))
        {
          if (ensure_controller())
-@@ -916,6 +1062,375 @@ int main(int argc, char** argv)
+@@ -916,6 +1079,375 @@ int main(int argc, char** argv)
        }
        ImGui::EndCombo();
      }
@@ -7599,7 +7691,7 @@ index 7d821dd..9f42c8a 100644
      const bool previous_show_fps_in_title = show_fps_in_title;
      if (ImGui::Checkbox("Show FPS in window title", &show_fps_in_title))
      {
-@@ -1069,7 +1584,16 @@ int main(int argc, char** argv)
+@@ -1069,7 +1601,16 @@ int main(int argc, char** argv)
      {
        std::vector<std::string> argument_storage = {SiblingRunner(argv[0]).string(), "--game",
                                                     current_game.string(), "--user-dir",
@@ -8283,7 +8375,7 @@ index 10ea4a6..bf8717b 100644
    if (options.backend == "llvm")
    {
 diff --git a/tools/moderngekko_run.cpp b/tools/moderngekko_run.cpp
-index a1fba9f..aabc4d8 100644
+index a1fba9f..51711d7 100644
 --- a/tools/moderngekko_run.cpp
 +++ b/tools/moderngekko_run.cpp
 @@ -1,10 +1,13 @@
@@ -8547,29 +8639,19 @@ index a1fba9f..aabc4d8 100644
        const auto bundled = executable_directory / module_name;
        const auto user_module =
            config.user_directory / "StaticRecompModules" / module_name;
-@@ -309,6 +464,12 @@ int RunMain(int argc, char **argv) {
+@@ -309,6 +464,15 @@ int RunMain(int argc, char **argv) {
          module_path = bundled;
        else if (std::filesystem::is_regular_file(user_module))
          module_path = user_module;
-+      else if (frontend_config.sixty_fps)
++      else
 +      {
-+        std::cerr << "60 FPS is enabled, but the precompiled 60 FPS module is missing: "
-+                  << module_name << '\n';
++        std::cerr << "The native game module is missing: " << module_name
++                  << "\nDisc extraction completed, but the game has not been recompiled."
++                  << "\nBuild the module from your own game with the repository setup "
++                     "instructions, then place it in:\n"
++                  << (config.user_directory / "StaticRecompModules").string() << '\n';
 +        return 2;
 +      }
      }
    }
    if (!module_path.empty())
-diff --git a/tests/runtime_test.cpp b/tests/runtime_test.cpp
-index 582879c..ca211d3 100644
---- a/tests/runtime_test.cpp
-+++ b/tests/runtime_test.cpp
-@@ -4,7 +4,7 @@
- 
- int main()
- {
--  static_assert(sizeof(CPUState) == 3528u);
-+  static_assert(sizeof(CPUState) == 3536u);
- 
-   moderngekko::LegacyRuntime runtime(true);
-   const moderngekko::ModuleLoadResult loaded =
