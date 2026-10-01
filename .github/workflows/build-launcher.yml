@@ -16,6 +16,10 @@ on:
         type: choice
         default: linux
         options: [linux, all, windows, macos]
+      source_ref:
+        description: 'Optional source tag or commit to package; defaults to this workflow ref.'
+        type: string
+        default: ''
   pull_request:
   push:
     tags:
@@ -58,9 +62,15 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
+      - name: Enable Windows long paths
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
+
       - name: Checkout with submodules
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.source_ref || github.ref }}
           submodules: recursive
           fetch-depth: 0
 
