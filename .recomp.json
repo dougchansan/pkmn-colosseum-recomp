@@ -1,0 +1,43 @@
+{
+  "$schema": "https://recomp.fyi/schema/v1.json",
+  "game": "Pokémon Colosseum",
+  "system": "GameCube",
+  "type": "recomp",
+  "original": {
+    "region": "USA",
+    "serial": "GC6E01"
+  },
+  "project": "Pokémon Colosseum Recomp",
+  "status": "in-progress",
+  "targets": [
+    "Windows",
+    "Linux",
+    "macOS"
+  ],
+  "toolchain": [
+    "Dolrecomp",
+    "ModernGekko"
+  ],
+  "approach": "Static PowerPC recompilation with DolRecomp and the ModernGekko runtime, supported by ongoing matching decompilation and targeted native replacements.",
+  "maintainers": [
+    {
+      "name": "dougchansan",
+      "link": "https://github.com/dougchansan"
+    }
+  ],
+  "links": [
+    {
+      "label": "Companion decompilation",
+      "url": "https://github.com/dougchansan/pkmn-colosseum"
+    },
+    {
+      "label": "DolRecomp",
+      "url": "https://github.com/ExpansionPak/DolRecomp"
+    },
+    {
+      "label": "ModernGekko",
+      "url": "https://github.com/ExpansionPak/ModernGekko"
+    }
+  ],
+  "notes": "Recompilation-first project backed by ongoing matching decompilation. Recovered source informs analysis, correctness work and native replacements without requiring a fully decompiled game. Development builds have verified gameplay on Windows, Linux and macOS; performance and compatibility work remains. No game data is distributed."
+}
