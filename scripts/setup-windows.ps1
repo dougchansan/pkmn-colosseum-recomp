@@ -4,7 +4,13 @@ param(
     [string]$Iso,
 
     [ValidateRange(1, 16)]
-    [int]$ParallelJobs = 4
+    [int]$ParallelJobs = 4,
+
+    # Keep the plain game modules instead of their hook-aware rebuilds.
+    [switch]$NoHookAware,
+
+    # Skip downloading the HD texture packs listed in mods/hd-packs.json.
+    [switch]$NoHdPacks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -90,8 +96,26 @@ try {
     python (Join-Path $PSScriptRoot 'verify-disc.py') $isoPath $gameRoot
     if ($LASTEXITCODE -ne 0) { throw 'GC6E01 disc verification failed.' }
 
-    & (Join-Path $PSScriptRoot 'package-imgui-launcher.ps1') `
-        -ParallelJobs $ParallelJobs
+    # The HD packs are downloaded, not stored in the repository. A pack whose
+    # download fails is left out with a warning instead of failing setup.
+    $packageArguments = @{ ParallelJobs = $ParallelJobs; NoHookAware = $NoHookAware }
+    if (-not $NoHdPacks) {
+        $hdPackRoot = Join-Path $projectRoot 'build\hd-packs'
+        python (Join-Path $PSScriptRoot 'fetch-hd-packs.py') --dest $hdPackRoot
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning 'Some HD texture packs could not be downloaded; setup continues without them.'
+        }
+        $uiTextures = Join-Path $hdPackRoot 'ui-textures\GC6E01'
+        if (Test-Path -LiteralPath $uiTextures -PathType Container) {
+            $packageArguments.HdTextureDir = $uiTextures
+        }
+        $communityPack = Join-Path $hdPackRoot 'Pokemon Colosseum HD Pack.zip'
+        if (Test-Path -LiteralPath $communityPack -PathType Leaf) {
+            $packageArguments.CommunityHdPackZip = $communityPack
+        }
+    }
+
+    & (Join-Path $PSScriptRoot 'package-imgui-launcher.ps1') @packageArguments
     if ($LASTEXITCODE -ne 0) { throw 'Release packaging failed.' }
 }
 finally {

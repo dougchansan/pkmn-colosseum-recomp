@@ -1,6 +1,9 @@
 param(
     [switch]$InstallRepositoryRoot,
     [switch]$SkipModuleBuild,
+    # Package the plain modules instead of their hook-aware rebuilds (same as
+    # HOOK_AWARE=0; see Build-HookAwareModule).
+    [switch]$NoHookAware,
     # Builds the private AI gameplay-driving harness into the runtime: the
     # structured agent-state export, the step/intent commands, and the agent and
     # controller overlays. Never pass this for a player release. The harness
@@ -14,11 +17,15 @@ param(
     # build\release, so a distribution build cannot pick up local state and
     # cannot destroy it either.
     [switch]$Distribution,
-    # Ship the curated UI and title-screen texture overrides from
-    # assets/hd-textures. Off by default: they are replacement game textures
-    # and are being held back from the player release for now. The capability
-    # is kept rather than deleted so re-enabling is one flag.
+    # Install title-screen and UI texture overrides into Load/Textures/GC6E01,
+    # by default from assets/hd-textures. They are replacement game textures,
+    # so they are never stored in this repository: setup downloads OrreHD's UI
+    # textures (mods/hd-packs.json) and passes that folder as -HdTextureDir,
+    # which implies -HdTextures.
     [switch]$HdTextures,
+    [string]$HdTextureDir = '',
+    # A community pack passed here is installed and switched on in a new
+    # User/config.ini; an existing config keeps the player's own setting.
     [string]$CommunityHdPackZip = '',
 
     [ValidateRange(1, 16)]
@@ -49,6 +56,14 @@ if ($CommunityHdPackZip) {
     if (-not (Test-Path -LiteralPath $CommunityHdPackZip -PathType Leaf)) {
         throw "Missing community HD texture pack: $CommunityHdPackZip"
     }
+}
+
+if ($HdTextureDir) {
+    $HdTextureDir = [IO.Path]::GetFullPath($HdTextureDir)
+    if (-not (Test-Path -LiteralPath $HdTextureDir -PathType Container)) {
+        throw "Missing HD texture folder: $HdTextureDir"
+    }
+    $HdTextures = $true
 }
 
 if ($Distribution -and ($AiHarness -or $HdTextures -or $CommunityHdPackZip)) {
@@ -102,9 +117,11 @@ cmake -S $modernGekkoRoot -B $modernGekkoBuild -G Ninja `
     -DMODERNGEKKO_PORTABLE_DEFAULT_GAME=ON `
     -DMODERNGEKKO_PORTABLE_USER_DIRECTORY=ON `
     -DMODERNGEKKO_GAMECUBE_CONTROLLERS=ON `
+    -DMODERNGEKKO_GBA=ON `
     '-DMODERNGEKKO_NATIVE_ULTRAWIDE_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-ultrawide.mgm' `
     '-DMODERNGEKKO_TEXT_UPSCALE_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-hd-text.mgm' `
     '-DMODERNGEKKO_MINIMAP_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-minimap.mgm' `
+    '-DMODERNGEKKO_ONLINE_BATTLE_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-online-battle.mgm' `
     "-DMODERNGEKKO_ENABLE_AI_HARNESS=$(if ($AiHarness) { 'ON' } else { 'OFF' })"
 if ($LASTEXITCODE -ne 0) {
     throw 'CMake configuration failed.'
@@ -196,6 +213,54 @@ if (-not $Distribution) {
     if (-not (Test-Path -LiteralPath $module60Path -PathType Leaf)) {
         throw "Optional 60 FPS C module does not exist: $module60Path"
     }
+
+    # Hook-aware modules, as scripts/setup-unix.sh builds them. A plain module
+    # sends every chunk holding a mod hook through the fallback, so the hooks
+    # fire; the hook-aware rebuild returns to the dispatcher only at the
+    # addresses this repo's mods hook or patch and runs everything else natively
+    # (about 3x the speed with the camera mod loaded). If a loaded mod hooks
+    # anything else, the runtime notices and runs the module the plain way.
+    function Build-HookAwareModule([string]$plainModule) {
+        $builtDirectory = Split-Path -Parent $plainModule
+        $out = Join-Path $builtDirectory 'hook-aware'
+        $hookAware = Join-Path $out ('build\' + (Split-Path -Leaf $plainModule))
+        if ($SkipModuleBuild -and (Test-Path -LiteralPath $hookAware -PathType Leaf)) {
+            return $hookAware
+        }
+        $generated = Join-Path $out 'generated'
+        if (Test-Path -LiteralPath $generated) {
+            Remove-Item -LiteralPath $generated -Recurse -Force
+        }
+        python (Join-Path $PSScriptRoot 'make-hook-aware-module.py') `
+            --src (Join-Path $builtDirectory 'dolrecomp-output\generated') --dst $generated `
+            --functions (Join-Path $projectRoot 'patches\GC6E01-functions.csv') `
+            --mods $modsRoot --idle-continuation 800FEB9C | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Hook-aware source generation failed: $plainModule" }
+        # The same C compiler moderngekko-port built the plain module with (it
+        # resolves clang without PATH); plain clang otherwise.
+        $compiler = 'clang'
+        $plainCache = Join-Path $builtDirectory 'module-build\CMakeCache.txt'
+        if (Test-Path -LiteralPath $plainCache -PathType Leaf) {
+            $entry = Select-String -LiteralPath $plainCache -Pattern '^CMAKE_C_COMPILER:[A-Z]+=(.+)$' |
+                Select-Object -First 1
+            if ($entry) { $compiler = $entry.Matches[0].Groups[1].Value.Trim() }
+        }
+        cmake -S (Join-Path $modernGekkoRoot 'vendor\dolphin\module-template') `
+            -B (Join-Path $out 'build') -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_C_COMPILER=$compiler" -DGAME_ID=GC6E01 "-DGENERATED_DIR=$generated" `
+            -DRECOMPCORE_MODULE_OPT_LEVEL=2 -DRECOMPCORE_MODULE_ENABLE_IPO=ON | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Hook-aware module configuration failed: $plainModule" }
+        cmake --build (Join-Path $out 'build') --parallel $ParallelJobs | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Hook-aware module build failed: $plainModule" }
+        if (-not (Test-Path -LiteralPath $hookAware -PathType Leaf)) {
+            throw "Hook-aware module not built: $hookAware"
+        }
+        return $hookAware
+    }
+    if (-not $NoHookAware -and $env:HOOK_AWARE -ne '0') {
+        $modulePath = Build-HookAwareModule $modulePath
+        $module60Path = Build-HookAwareModule $module60Path
+    }
 }
 
 $launcher = Join-Path $modernGekkoBuild 'PokemonColosseumRecomp.exe'
@@ -281,7 +346,7 @@ function Install-Package([string]$destination, [switch]$DeveloperInstall) {
     # community HD pack, and the runtime expects the directory to exist.
     $textureDestination = Join-Path $userRoot 'Load\Textures'
     New-Item -ItemType Directory -Path $textureDestination -Force | Out-Null
-    $hdTextureSource = Join-Path $hdTextureRoot 'GC6E01'
+    $hdTextureSource = if ($HdTextureDir) { $HdTextureDir } else { Join-Path $hdTextureRoot 'GC6E01' }
     if (-not $HdTextures) {
         Write-Output ('Packaging without the curated texture overrides; ' +
             'pass -HdTextures to include them.')
@@ -293,6 +358,7 @@ function Install-Package([string]$destination, [switch]$DeveloperInstall) {
             'them. hires_textures stays on, so a pack dropped in later is used.')
     }
     $frontendConfig = Join-Path $userRoot 'config.ini'
+    $communityPackDefault = if ($CommunityHdPackZip) { 'true' } else { 'false' }
     if (-not (Test-Path -LiteralPath $frontendConfig -PathType Leaf)) {
         @(
         '[Video]'
@@ -308,7 +374,7 @@ function Install-Package([string]$destination, [switch]$DeveloperInstall) {
         'text_upscale=false'
         'minimap_high_contrast=false'
         'hires_textures=true'
-        'community_hd_texture_pack=false'
+        "community_hd_texture_pack=$communityPackDefault"
         'cache_hires_textures=false'
         'dump_textures=false'
         'fullscreen=false'
@@ -332,7 +398,7 @@ function Install-Package([string]$destination, [switch]$DeveloperInstall) {
     }
     if ($frontendConfigText -notmatch '(?m)^community_hd_texture_pack=') {
         $frontendConfigText = $frontendConfigText -replace `
-            '(?m)^(cache_hires_textures=)', "community_hd_texture_pack=false`r`n`$1"
+            '(?m)^(cache_hires_textures=)', "community_hd_texture_pack=$communityPackDefault`r`n`$1"
     }
     Set-Content -LiteralPath $frontendConfig -Value $frontendConfigText -Encoding ascii
 

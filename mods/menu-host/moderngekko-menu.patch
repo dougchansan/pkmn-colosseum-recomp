@@ -1,0 +1,1180 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -247,6 +247,7 @@
+         tools/automation_protocol.cpp
+         src/runtime/hd_texture_pack.cpp
+         src/runtime/dolphin_runtime.cpp
++        src/runtime/pause_menu_runtime.cpp
+         vendor/dolphin/Source/Core/DolphinNoGUI/Platform.cpp
+         vendor/dolphin/Source/Core/DolphinNoGUI/PlatformHeadless.cpp
+     )
+@@ -700,6 +701,10 @@
+ endif()
+ 
+ if(BUILD_TESTING)
++    add_executable(moderngekko_pause_menu_policy_test tests/pause_menu_policy_test.cpp)
++    target_include_directories(moderngekko_pause_menu_policy_test PRIVATE tools)
++    target_compile_features(moderngekko_pause_menu_policy_test PRIVATE cxx_std_17)
++    add_test(NAME moderngekko.pause_menu_policy COMMAND moderngekko_pause_menu_policy_test)
+     add_executable(moderngekko_dol_patch_test
+         tests/dol_patch_test.cpp
+         tools/dol_patch.cpp)
+@@ -770,6 +775,21 @@
+     target_compile_features(moderngekko_colosseum_projection_test PRIVATE cxx_std_23)
+     add_test(NAME moderngekko.colosseum_projection
+              COMMAND moderngekko_colosseum_projection_test)
++
++    if(TARGET videocommon)
++        add_executable(moderngekko_onscreen_ui_lifecycle_test
++            tests/onscreen_ui_lifecycle_test.cpp)
++        target_include_directories(moderngekko_onscreen_ui_lifecycle_test PRIVATE
++            "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/Source/Core")
++        target_link_libraries(moderngekko_onscreen_ui_lifecycle_test PRIVATE
++            ModernGekko::Runtime uicommon imgui implot)
++        target_compile_features(moderngekko_onscreen_ui_lifecycle_test PRIVATE cxx_std_23)
++        if(MSVC)
++            target_compile_options(moderngekko_onscreen_ui_lifecycle_test PRIVATE /Zc:preprocessor)
++        endif()
++        add_test(NAME moderngekko.onscreen_ui_lifecycle
++                 COMMAND moderngekko_onscreen_ui_lifecycle_test)
++    endif()
+ 
+     add_executable(moderngekko_automation_protocol_test
+         tests/automation_protocol_test.cpp
+diff --git a/src/runtime/dolphin_runtime.cpp b/src/runtime/dolphin_runtime.cpp
+--- a/src/runtime/dolphin_runtime.cpp
++++ b/src/runtime/dolphin_runtime.cpp
+@@ -2,6 +2,7 @@
+ #include "moderngekko/hd_texture_pack.hpp"
+ 
+ #include "automation_protocol.hpp"
++#include "pause_menu_host.hpp"
+ #include "launcher_savestates.hpp"
+ #include "AudioCommon/AudioCommon.h"
+ #include "Common/Config/Config.h"
+@@ -1244,6 +1245,11 @@
+ 
+ void DrawNavigationOverlay()
+ {
++  if (!ImGui::GetCurrentContext())
++    return;
++  moderngekko::pause_menu::Draw();
++  if (Host_IsPauseMenuOpen())
++    return;
+   NavigationOverlayState* const state =
+       s_navigation_overlay_state.load(std::memory_order_acquire);
+   if (!state)
+@@ -1744,13 +1750,22 @@
+ 
+ void Host_RequestAudioMuteToggle()
+ {
+-  NavigationOverlayState* const state =
+-      s_navigation_overlay_state.load(std::memory_order_acquire);
+-  if (!state)
+-    return;
+-
+-  std::lock_guard lock(state->mutex);
+-  state->pending_mute_toggle = true;
++  Core::QueueHostJob([](Core::System& system) {
++    auto* state = s_navigation_overlay_state.load(std::memory_order_acquire);
++    if (!state || !Core::IsRunning(system))
++      return;
++    const bool muted = !Config::Get(Config::MAIN_AUDIO_MUTED);
++    Config::SetBase(Config::MAIN_AUDIO_MUTED, muted);
++    Config::Save();
++    AudioCommon::UpdateSoundStream(system);
++    state->audio_muted.store(muted, std::memory_order_relaxed);
++  });
++}
++
++void Host_TogglePauseMenuFullscreen()
++{
++  if (s_platform)
++    s_platform->ToggleFullscreenFromMenu();
+ }
+ 
+ bool Host_IsGamePaused()
+@@ -1805,6 +1820,20 @@
+   NavigationOverlayState* const state =
+       s_navigation_overlay_state.load(std::memory_order_acquire);
+   return state ? state->ultrawide_efb_scale.load(std::memory_order_relaxed) : 5;
++}
++
++// Called on the CPU thread. Keep both scene modes at the selected scale so
++// authored menus and door transitions cannot restore the previous resolution.
++void Host_SetPauseMenuResolution(int scale)
++{
++  if (scale < 1 || scale > 6)
++    return;
++  auto* state = s_navigation_overlay_state.load(std::memory_order_acquire);
++  if (!state)
++    return;
++  state->standard_efb_scale = scale;
++  state->ultrawide_efb_scale.store(scale, std::memory_order_relaxed);
++  Config::SetCurrent(Config::GFX_EFB_SCALE, scale);
+ }
+ 
+ void Host_SetUltrawideEfbScale(int scale)
+@@ -2829,10 +2858,9 @@
+ void AutomationLoop(Runtime& runtime, ImplT& impl, std::stop_token stop_token)
+ {
+   const std::filesystem::path root = impl.config.automation.directory;
+-  if (root.empty())
+-    return;
+-
+-  EnsureAutomationDirectories(root);
++  const bool external_commands = !root.empty();
++  if (external_commands)
++    EnsureAutomationDirectories(root);
+   auto next_status_write = std::chrono::steady_clock::now();
+   auto watchdog_last_frame_time = std::chrono::steady_clock::now();
+   std::uint64_t watchdog_last_frame =
+@@ -2966,6 +2994,7 @@
+       watchdog_last_frame_time = watchdog_now;
+     }
+ 
++    if (external_commands)
+     for (const auto& command_path : automation::ListCommandFiles(root / "commands"))
+     {
+       automation::Command command;
+@@ -2996,7 +3025,7 @@
+     }
+ 
+     const auto now = std::chrono::steady_clock::now();
+-    if (now >= next_status_write)
++    if (external_commands && now >= next_status_write)
+     {
+       WriteAutomationStatus(root, impl);
+       next_status_write = now + std::chrono::milliseconds(200);
+@@ -3004,7 +3033,8 @@
+     std::this_thread::sleep_for(std::chrono::milliseconds(50));
+   }
+ 
+-  WriteAutomationStatus(root, impl);
++  if (external_commands)
++    WriteAutomationStatus(root, impl);
+ }
+ }  // namespace
+ 
+@@ -3258,6 +3288,7 @@
+ }
+ 
+ Runtime::~Runtime() {
++  pause_menu::Shutdown();
+   RequestStop();
+   State::SetOnAfterLoadCallback(nullptr);
+   m_impl->present_hook = {};
+@@ -3345,6 +3376,8 @@
+   }
+   m_impl->state_hook =
+       Core::AddOnStateChangedCallback([this](Core::State state) {
++        m_impl->navigation_overlay.paused.store(state == Core::State::Paused,
++                                                std::memory_order_relaxed);
+         if (state == Core::State::Uninitialized && m_impl->platform)
+           m_impl->platform->Stop();
+       });
+@@ -4104,8 +4137,9 @@
+         });
+   }
+   std::jthread automation_thread;
+-  if (!m_impl->config.automation.directory.empty())
+-    automation_thread = std::jthread([this](std::stop_token stop_token) {
++  // Host actions and recovery saves must also work in ordinary launches.
++  // File commands/status remain disabled without an explicit automation root.
++  automation_thread = std::jthread([this](std::stop_token stop_token) {
+       AutomationLoop(*this, *m_impl, stop_token);
+     });
+   std::jthread title_thread;
+@@ -4118,7 +4152,11 @@
+       }
+     });
+   }
++  pause_menu::Initialize(m_impl->config, m_impl->mods.get());
++  VideoCommon::SetExternalOverlayDrawCallback(&DrawNavigationOverlay);
+   m_impl->platform->MainLoop();
++  pause_menu::Shutdown();
++  VideoCommon::SetExternalOverlayDrawCallback(nullptr);
+   automation_thread.request_stop();
+   if (automation_thread.joinable())
+     automation_thread.join();
+diff --git a/src/runtime/pause_menu_runtime.cpp b/src/runtime/pause_menu_runtime.cpp
+new file mode 100644
+--- /dev/null
++++ b/src/runtime/pause_menu_runtime.cpp
+@@ -0,0 +1,618 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#include "AudioCommon/AudioCommon.h"
++#include "Common/Config/Config.h"
++#include "Common/FileUtil.h"
++#include "Common/IniFile.h"
++#include "Core/Config/GraphicsSettings.h"
++#include "Core/Config/MainSettings.h"
++#include "Core/Core.h"
++#include "Core/HW/GCPad.h"
++#include "Core/Host.h"
++#include "Core/SavestateLayout.h"
++#include "Core/State.h"
++#include "Core/System.h"
++#include "InputCommon/ControllerEmu/ControllerEmu.h"
++#include "InputCommon/ControllerInterface/ControllerInterface.h"
++#include "InputCommon/GCPadStatus.h"
++#include "InputCommon/InputConfig.h"
++#include "VideoCommon/AsyncRequests.h"
++#include "VideoCommon/Present.h"
++#include "moderngekko/cpu_state.h"
++#include "moderngekko/mod_loader.hpp"
++#include "moderngekko/runtime.hpp"
++#include "pause_menu_host.hpp"
++#include "pause_menu_policy.hpp"
++#include <algorithm>
++#include <array>
++#include <atomic>
++#include <chrono>
++#include <imgui.h>
++#include <memory>
++#include <mutex>
++#include <string>
++#include <vector>
++
++bool Host_IsSixtyFpsEnabled();
++void Host_ToggleSixtyFps();
++bool Host_IsHighResolutionTexturesEnabled();
++void Host_ToggleHighResolutionTextures();
++bool Host_IsTextUpscaleEnabled();
++void Host_ToggleTextUpscale();
++bool Host_IsInputOverlayEnabled();
++void Host_ToggleInputOverlay();
++bool Host_IsAutosaveEnabled();
++void Host_ToggleAutosave();
++bool Host_IsAudioMuted();
++void Host_RequestAudioMuteToggle();
++void Host_TogglePauseMenuFullscreen();
++void Host_SetFastForwardActive(bool active);
++void Host_SetPauseMenuResolution(int scale);
++
++namespace moderngekko::pause_menu {
++namespace {
++struct Menu {
++  std::mutex mutex;
++  std::mutex mods_mutex;
++  Policy policy;
++  std::array<std::atomic<bool>, 256> keys{};
++  std::array<std::atomic<bool>, 256> pressed_keys{};
++  std::atomic<bool> active{true}, open{false}, blocked{false}, toggle{false};
++  std::atomic<bool> repaint_pending{false};
++  ModManager *mods = nullptr;
++  std::string config_path;
++  std::string checkpoint_directory;
++  std::string status;
++  int sensitivity = 100;
++  bool invert_y = false, was_paused = false;
++  int adjust_direction = 0;
++  double next_adjust = 0;
++  bool camera_available = false;
++  std::chrono::steady_clock::time_point last_repaint{};
++  std::chrono::steady_clock::time_point last_poll{};
++};
++std::atomic<std::shared_ptr<Menu>> current;
++thread_local bool polling_menu = false;
++
++void Filter(int port, GCPadStatus &pad) {
++  if (port != 0 || polling_menu)
++    return;
++  const auto menu = current.load();
++  if (!menu || !menu->active)
++    return;
++  const bool chord = (pad.button & (PAD_BUTTON_START | PAD_TRIGGER_Z)) ==
++                     (PAD_BUTTON_START | PAD_TRIGGER_Z);
++  if (menu->blocked || menu->toggle || chord) {
++    const bool connected = pad.isConnected;
++    pad = GCPadStatus{};
++    pad.isConnected = connected;
++  }
++}
++
++void Camera(const std::shared_ptr<Menu> &menu, bool recenter = false) {
++  const int sensitivity = menu->sensitivity;
++  const bool invert = menu->invert_y;
++  Core::RunOnCPUThread(
++      Core::System::GetInstance(),
++      [weak = std::weak_ptr(menu), sensitivity, invert, recenter] {
++        const auto state = weak.lock();
++        if (!state)
++          return;
++        std::lock_guard lock(state->mods_mutex);
++        if (!state->active || !state->mods)
++          return;
++        for (const auto &mod : state->mods->GetLoadedMods()) {
++          if (auto function = state->mods->FindExport(
++                  mod.id, recenter ? "moderngekko.camera.recenter"
++                                   : "moderngekko.camera.configure")) {
++            CPUState cpu{};
++            cpu.gpr[3] = sensitivity;
++            cpu.gpr[4] = invert;
++            function(&cpu);
++            break;
++          }
++        }
++      });
++}
++
++void SaveCamera(const std::shared_ptr<Menu> &menu) {
++  Common::IniFile ini;
++  ini.Load(menu->config_path);
++  auto *section = ini.GetOrCreateSection("Camera");
++  section->Set("Sensitivity", menu->sensitivity);
++  section->Set("InvertY", menu->invert_y);
++  ini.Save(menu->config_path);
++  Camera(menu);
++}
++
++std::string Device() {
++  if (!Pad::IsInitialized() || !Pad::GetConfig() ||
++      !Pad::GetConfig()->GetControllerCount())
++    return "No controller";
++  auto lock = ControllerEmu::EmulatedController::GetStateLock();
++  const auto name =
++      Pad::GetConfig()->GetController(0)->GetDefaultDevice().ToString();
++  return name.empty() ? "Not selected" : name;
++}
++
++void CycleDevice(int direction) {
++  auto devices = g_controller_interface.GetAllDeviceStrings();
++  std::erase_if(devices, [](const std::string &name) {
++    return !name.starts_with("SDL/") && !name.starts_with("XInput/");
++  });
++  if (devices.empty() || !Pad::IsInitialized() || !Pad::GetConfig() ||
++      !Pad::GetConfig()->GetControllerCount())
++    return;
++  auto *config = Pad::GetConfig();
++  auto lock = ControllerEmu::EmulatedController::GetStateLock();
++  auto *controller = config->GetController(0);
++  const auto found = std::find(devices.begin(), devices.end(),
++                               controller->GetDefaultDevice().ToString());
++  const int index = found == devices.end()
++                        ? (direction > 0 ? -1 : 0)
++                        : static_cast<int>(found - devices.begin());
++  const int count = static_cast<int>(devices.size());
++  controller->SetDefaultDevice(devices[(index + direction + count) % count]);
++  controller->UpdateReferences(g_controller_interface);
++  config->SaveConfig();
++}
++
++void Adjust(const std::shared_ptr<Menu> &menu, int direction) {
++  if (menu->policy.page() == Page::Controls) {
++    CycleDevice(direction);
++    return;
++  }
++  if (menu->policy.focus() >= 6 && menu->policy.focus() <= 8 &&
++      !menu->camera_available) {
++    menu->status = "Camera controls require the camera mod.";
++    return;
++  }
++  switch (menu->policy.focus()) {
++  case 0:
++    Host_ToggleSixtyFps();
++    break;
++  case 1:
++    Core::RunOnCPUThread(Core::System::GetInstance(),
++                         [] { Host_ToggleHighResolutionTextures(); });
++    break;
++  case 2:
++    Core::RunOnCPUThread(Core::System::GetInstance(),
++                         [] { Host_ToggleTextUpscale(); });
++    break;
++  case 3:
++    Host_ToggleInputOverlay();
++    break;
++  case 4:
++    Host_ToggleAutosave();
++    break;
++  case 5:
++    Host_RequestAudioMuteToggle();
++    break;
++  case 6:
++    menu->sensitivity = std::clamp(menu->sensitivity + direction * 10, 50, 200);
++    SaveCamera(menu);
++    break;
++  case 7:
++    menu->invert_y = !menu->invert_y;
++    SaveCamera(menu);
++    break;
++  case 8:
++    Camera(menu, true);
++    break;
++  case 9:
++    Host_TogglePauseMenuFullscreen();
++    break;
++  case 10:
++    Config::SetBase(
++        Config::MAIN_AUDIO_VOLUME,
++        std::clamp(Config::Get(Config::MAIN_AUDIO_VOLUME) + direction * 10, 0,
++                   100));
++    Config::Save();
++    AudioCommon::UpdateSoundStream(Core::System::GetInstance());
++    break;
++  case 11: {
++    const int scale =
++        std::clamp(Config::Get(Config::GFX_EFB_SCALE) + direction, 1, 6);
++    Common::IniFile ini;
++    ini.Load(menu->config_path);
++    ini.GetOrCreateSection("Performance")->Set("ResolutionScale", scale);
++    ini.GetOrCreateSection("Video")->Set("resolution",
++                                         std::to_string(640 * scale) + "x" +
++                                             std::to_string(528 * scale));
++    ini.Save(menu->config_path);
++    Core::RunOnCPUThread(Core::System::GetInstance(),
++                         [scale] { Host_SetPauseMenuResolution(scale); });
++    break;
++  }
++  case 12:
++    Config::SetBase(Config::GFX_VSYNC, !Config::Get(Config::GFX_VSYNC));
++    Config::Save();
++    break;
++  case 13: {
++    const bool show = !Config::Get(Config::GFX_SHOW_FPS);
++    Config::SetBase(Config::GFX_SHOW_FPS, show);
++    Config::SetBase(Config::GFX_SHOW_FTIMES, show);
++    Config::SetBase(Config::GFX_SHOW_SPEED, show);
++    Config::SetBase(Config::GFX_SHOW_INTERNAL_RESOLUTION, show);
++    Config::Save();
++    break;
++  }
++  case 14:
++    Config::SetBase(Config::GFX_SHOW_GRAPHS,
++                    !Config::Get(Config::GFX_SHOW_GRAPHS));
++    Config::Save();
++    break;
++  case 15:
++    Config::SetBase(Config::GFX_OVERLAY_STATS,
++                    !Config::Get(Config::GFX_OVERLAY_STATS));
++    Config::Save();
++    break;
++  default:
++    break;
++  }
++}
++
++void ActionHost(const std::shared_ptr<Menu> &menu, Action action,
++                int direction = 1) {
++  switch (action) {
++  case Action::SaveCheckpoint: {
++    const auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(
++                           std::chrono::system_clock::now().time_since_epoch())
++                           .count();
++    const auto path =
++        std::filesystem::path(menu->checkpoint_directory) /
++        State::Layout::TimestampedName(static_cast<std::time_t>(stamp / 1000),
++                                       static_cast<std::size_t>(stamp % 1000),
++                                       State::Layout::MANUAL_PREFIX);
++    if (File::CreateFullPath(path.string())) {
++      State::SaveAs(Core::System::GetInstance(), path.string());
++      menu->status = "Checkpoint save requested";
++    } else
++      menu->status = "Unable to create checkpoint folder";
++    break;
++  }
++  case Action::Quit:
++    Host_Message(HostMessageID::WMUserStop);
++    break;
++  case Action::AdjustSetting:
++    Adjust(menu, direction);
++    break;
++  default:
++    break;
++  }
++}
++
++void SyncPause(const std::shared_ptr<Menu> &menu, bool previously_open) {
++  const bool open = menu->policy.is_open();
++  auto &system = Core::System::GetInstance();
++  if (open && !previously_open) {
++    Host_SetFastForwardActive(false);
++    menu->was_paused = Core::GetState(system) == Core::State::Paused;
++    if (Core::GetState(system) == Core::State::Running)
++      Core::SetState(system, Core::State::Paused);
++  } else if (!open && previously_open && !menu->was_paused &&
++             Core::GetState(system) == Core::State::Paused) {
++    Core::SetState(system, Core::State::Running);
++  }
++  menu->open = open;
++  menu->blocked = menu->policy.blocks_game_input();
++}
++
++std::vector<std::string> Rows(const Menu &menu) {
++  auto enabled = [](const char *title, bool value) {
++    return std::string(title) + (value ? "   ON" : "   OFF");
++  };
++  switch (menu.policy.page()) {
++  case Page::Home:
++    return {"Resume adventure", "Settings", "Controls", "Save checkpoint",
++            "Quit game"};
++  case Page::Settings:
++    return {
++        enabled("60 FPS", Host_IsSixtyFpsEnabled()),
++        enabled("HD textures", Host_IsHighResolutionTexturesEnabled()),
++        enabled("Sharper text", Host_IsTextUpscaleEnabled()),
++        enabled("Input overlay", Host_IsInputOverlayEnabled()),
++        enabled("Autosave", Host_IsAutosaveEnabled()),
++        enabled("Mute audio", Host_IsAudioMuted()),
++        "Camera sensitivity   " + std::to_string(menu.sensitivity) + "%",
++        enabled("Invert camera Y", menu.invert_y),
++        "Recenter camera",
++        "Toggle fullscreen",
++        "Audio volume   " +
++            std::to_string(Config::Get(Config::MAIN_AUDIO_VOLUME)) + "%",
++        "Render resolution   " +
++            (Config::Get(Config::GFX_EFB_SCALE) == 0
++                 ? std::string("Auto")
++                 : std::to_string(Config::Get(Config::GFX_EFB_SCALE)) +
++                       "x native"),
++        enabled("VSync", Config::Get(Config::GFX_VSYNC)),
++        enabled("Performance display", Config::Get(Config::GFX_SHOW_FPS)),
++        enabled("Frame-time graph", Config::Get(Config::GFX_SHOW_GRAPHS)),
++        enabled("Render statistics", Config::Get(Config::GFX_OVERLAY_STATS)),
++        "Back"};
++  case Page::Controls: {
++    std::string name = Device();
++    const auto first = name.find('/');
++    const auto second =
++        first == std::string::npos ? first : name.find('/', first + 1);
++    if (second != std::string::npos)
++      name = name.substr(second + 1);
++    return {"Controller   " + name, "Back"};
++  }
++  case Page::QuitConfirm:
++    return {"Keep playing", "Quit game"};
++  default:
++    return {};
++  }
++}
++} // namespace
++
++void Initialize(const RuntimeConfig &config, ModManager *mods) {
++  Shutdown();
++  auto menu = std::make_shared<Menu>();
++  menu->mods = mods;
++  if (mods)
++    for (const auto &mod : mods->GetLoadedMods())
++      if (mods->FindExport(mod.id, "moderngekko.camera.configure"))
++        menu->camera_available = true;
++  menu->config_path = (config.user_directory / "config.ini").string();
++  menu->checkpoint_directory =
++      ((config.automation.directory.empty() ? config.user_directory
++                                            : config.automation.directory) /
++       "states")
++          .string();
++  Common::IniFile ini;
++  ini.Load(menu->config_path);
++  const auto *section = ini.GetOrCreateSection("Camera");
++  section->Get("Sensitivity", &menu->sensitivity, 100);
++  section->Get("InvertY", &menu->invert_y, false);
++  menu->sensitivity = std::clamp(menu->sensitivity, 50, 200);
++  current.store(menu);
++#ifdef _WIN32
++  if (!config.headless)
++    Pad::SetStatusFilter(&Filter);
++#endif
++  Camera(menu);
++  int resolution = 0;
++  ini.GetOrCreateSection("Performance")->Get("ResolutionScale", &resolution, 0);
++  if (resolution >= 1 && resolution <= 6)
++    Core::RunOnCPUThread(Core::System::GetInstance(), [resolution] {
++      Host_SetPauseMenuResolution(resolution);
++    });
++}
++
++void Shutdown() {
++  auto menu = current.exchange(nullptr);
++  Pad::SetStatusFilter(nullptr);
++  if (!menu)
++    return;
++  std::lock_guard lock(menu->mutex);
++  std::lock_guard mods_lock(menu->mods_mutex);
++  menu->active = false;
++  menu->mods = nullptr;
++}
++
++void Draw() {
++  const auto menu = current.load();
++  if (!menu || !menu->open)
++    return;
++  std::unique_lock lock(menu->mutex, std::try_to_lock);
++  if (!lock.owns_lock())
++    return;
++  if (!menu->active)
++    return;
++  const auto rows = Rows(*menu);
++  menu->policy.set_rows(rows.size());
++  const auto &io = ImGui::GetIO();
++  ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
++                                                IM_COL32(3, 10, 27, 170));
++  const float scale = std::clamp(io.DisplaySize.y / 900.0f, 0.65f, 1.5f);
++  ImGui::SetNextWindowPos(
++      ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
++      ImGuiCond_Always, ImVec2(0.5f, 0.5f));
++  ImGui::SetNextWindowSize(
++      ImVec2(std::min(660.0f * scale, io.DisplaySize.x - 24), 0),
++      ImGuiCond_Always);
++  ImGui::PushStyleColor(ImGuiCol_WindowBg,
++                        ImVec4(0.025f, 0.065f, 0.17f, 0.98f));
++  ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.80f, 0.18f, 1));
++  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.93f, 0.96f, 1, 1));
++  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
++                      ImVec2(24 * scale, 20 * scale));
++  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12 * scale);
++  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2);
++  ImGui::Begin("Colosseum pause", nullptr,
++               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
++                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
++                   ImGuiWindowFlags_NoSavedSettings);
++  ImGui::SetWindowFontScale(scale * 1.5f);
++  ImGui::TextColored(ImVec4(1, 0.83f, 0.25f, 1), "POKEMON COLOSSEUM");
++  ImGui::TextUnformatted(
++      menu->policy.page() == Page::QuitConfirm ? "Leave your adventure?"
++      : menu->policy.page() == Page::Settings  ? "Settings"
++      : menu->policy.page() == Page::Controls  ? "Controls"
++                                               : "Adventure paused");
++  ImGui::Separator();
++  for (std::size_t row = 0; row < rows.size(); ++row) {
++    ImGui::PushID(static_cast<int>(row));
++    const bool focused = row == menu->policy.focus();
++    const bool unavailable = menu->policy.page() == Page::Settings &&
++                             row >= 6 && row <= 8 && !menu->camera_available;
++    ImGui::BeginDisabled(unavailable);
++    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.20f, 0.32f, 0.52f, 1));
++    const std::string label = (focused ? ">  " : "   ") + rows[row];
++    if (ImGui::Selectable(label.c_str(), focused, 0, ImVec2(0, 28 * scale))) {
++      Core::QueueHostJob([weak = std::weak_ptr(menu), row](Core::System &) {
++        auto state = weak.lock();
++        if (!state)
++          return;
++        std::lock_guard guard(state->mutex);
++        if (!state->active)
++          return;
++        const bool open = state->policy.is_open();
++        ActionHost(state, state->policy.activate(row));
++        SyncPause(state, open);
++      });
++    }
++    ImGui::PopStyleColor();
++    ImGui::PopID();
++    ImGui::EndDisabled();
++  }
++  if (menu->policy.page() == Page::Controls) {
++    ImGui::Separator();
++    ImGui::TextWrapped(
++        "Start + Z / Esc: pause menu\nD-pad / arrows: navigate    A / Enter: "
++        "select\nB / Backspace: back    Left / Right: change device\nCamera: "
++        "C-stick orbit    Z + Y: free camera\nZ + D-pad Down: recenter    "
++        "D-pad Up / Down: zoom\nExisting controller button bindings are "
++        "preserved.");
++  }
++  ImGui::Separator();
++  if (!menu->status.empty())
++    ImGui::TextWrapped("%s", menu->status.c_str());
++  if (menu->policy.page() == Page::Settings ||
++      menu->policy.page() == Page::Controls)
++    ImGui::TextWrapped("Up / Down: move    Left / Right: adjust\nEnter / A: "
++                       "select    Esc: resume    B: back");
++  else
++    ImGui::TextWrapped("Arrows / D-pad: move    Enter / A: select\nEsc: resume "
++                       "   Backspace / B: back");
++  ImGui::End();
++  ImGui::PopStyleVar(3);
++  ImGui::PopStyleColor(3);
++}
++} // namespace moderngekko::pause_menu
++
++void Host_PauseMenuKey(int key, bool down) {
++  const auto menu = moderngekko::pause_menu::current.load();
++  if (menu && key >= 0 && key < 256) {
++    if (down && !menu->keys[key].exchange(true))
++      menu->pressed_keys[key] = true;
++    if (!down)
++      menu->keys[key] = false;
++  }
++}
++bool Host_IsPauseMenuOpen() {
++  const auto menu = moderngekko::pause_menu::current.load();
++  return menu && menu->open;
++}
++void Host_PauseMenuFocusLost() {
++  if (const auto menu = moderngekko::pause_menu::current.load()) {
++    for (auto &key : menu->keys)
++      key = false;
++    for (auto &key : menu->pressed_keys)
++      key = false;
++    menu->toggle = false;
++  }
++}
++bool Host_IsPauseMenuInputBlocked() {
++  const auto menu = moderngekko::pause_menu::current.load();
++  return menu && (menu->blocked || menu->toggle);
++}
++void Host_RequestPauseMenuToggle() {
++  if (const auto menu = moderngekko::pause_menu::current.load())
++    menu->toggle = true;
++}
++
++void Host_PauseMenuTick() {
++  using namespace moderngekko::pause_menu;
++  const auto menu = current.load();
++  if (!menu || !menu->active)
++    return;
++  const auto poll_time = std::chrono::steady_clock::now();
++  if (poll_time - menu->last_poll < std::chrono::milliseconds(16))
++    return;
++  menu->last_poll = poll_time;
++  GCPadStatus pad{};
++  if (Pad::IsInitialized()) {
++    g_controller_interface.UpdateInput();
++    polling_menu = true;
++    pad = Pad::GetStatus(0);
++    polling_menu = false;
++  }
++  std::lock_guard lock(menu->mutex);
++  Input input;
++  Input pressed;
++  pressed.escape = menu->pressed_keys[27].exchange(false);
++  pressed.up = menu->pressed_keys[38].exchange(false);
++  pressed.down = menu->pressed_keys[40].exchange(false);
++  pressed.accept = menu->pressed_keys[13].exchange(false);
++  pressed.back = menu->pressed_keys[8].exchange(false);
++  menu->policy.reset_edges(pressed);
++  input.escape = menu->keys[27] || pressed.escape;
++  input.up = menu->keys[38] || pressed.up || (pad.button & PAD_BUTTON_UP) ||
++             pad.stickY > 192;
++  input.down = menu->keys[40] || pressed.down ||
++               (pad.button & PAD_BUTTON_DOWN) || pad.stickY < 64;
++  input.accept =
++      menu->keys[13] || pressed.accept || (pad.button & PAD_BUTTON_A);
++  input.back = menu->keys[8] || pressed.back || (pad.button & PAD_BUTTON_B);
++  input.start = pad.button & PAD_BUTTON_START;
++  input.select = pad.button & PAD_TRIGGER_Z;
++  input.any_game_button =
++      menu->keys[37] || menu->keys[39] || pad.button || pad.triggerLeft ||
++      pad.triggerRight || std::abs(static_cast<int>(pad.stickX) - 128) > 32 ||
++      std::abs(static_cast<int>(pad.stickY) - 128) > 32 ||
++      std::abs(static_cast<int>(pad.substickX) - 128) > 32 ||
++      std::abs(static_cast<int>(pad.substickY) - 128) > 32;
++  const auto state = Core::GetState(Core::System::GetInstance());
++  input.game_running =
++      state == Core::State::Running || state == Core::State::Paused;
++  const bool was_open = menu->policy.is_open();
++  const bool requested_toggle = menu->toggle.exchange(false);
++  const double now = std::chrono::duration<double>(
++                         std::chrono::steady_clock::now().time_since_epoch())
++                         .count();
++  const auto page = menu->policy.page();
++  const std::size_t rows = page == Page::Settings   ? 17
++                           : page == Page::Controls ? 2
++                                                    : 0;
++  ActionHost(menu, menu->policy.update(input, now, rows));
++  // A host command and an input edge in the same tick describe one toggle.
++  if (requested_toggle && input.game_running &&
++      menu->policy.is_open() == was_open) {
++    if (was_open)
++      menu->policy.close();
++    else
++      menu->policy.open();
++  }
++  const bool left_pressed = menu->pressed_keys[37].exchange(false);
++  const bool right_pressed = menu->pressed_keys[39].exchange(false);
++  if (left_pressed || right_pressed)
++    menu->adjust_direction = 0;
++  const bool left = menu->keys[37] || left_pressed ||
++                    (pad.button & PAD_BUTTON_LEFT) || pad.stickX < 64;
++  const bool right = menu->keys[39] || right_pressed ||
++                     (pad.button & PAD_BUTTON_RIGHT) || pad.stickX > 192;
++  const int direction = left == right ? 0 : left ? -1 : 1;
++  if (direction &&
++      (direction != menu->adjust_direction || now >= menu->next_adjust) &&
++      (menu->policy.page() == Page::Settings ||
++       menu->policy.page() == Page::Controls) &&
++      menu->policy.focus() + 1 < menu->policy.row_count()) {
++    Adjust(menu, direction);
++    menu->next_adjust =
++        now + (direction != menu->adjust_direction ? 0.35 : 0.10);
++  }
++  menu->adjust_direction = direction;
++  SyncPause(menu, was_open);
++  const auto time = std::chrono::steady_clock::now();
++  if (menu->open &&
++      Core::GetState(Core::System::GetInstance()) == Core::State::Paused &&
++      time - menu->last_repaint >= std::chrono::milliseconds(16) &&
++      !menu->repaint_pending.exchange(true)) {
++    menu->last_repaint = time;
++    Core::RunOnCPUThread(Core::System::GetInstance(),
++                         [weak = std::weak_ptr(menu)] {
++                           const auto state = weak.lock();
++                           if (!state || !state->active)
++                             return;
++                           AsyncRequests::GetInstance()->PushEvent([weak] {
++                             if (const auto state = weak.lock()) {
++                               if (state->active && state->open && g_presenter)
++                                 g_presenter->Present();
++                               state->repaint_pending = false;
++                             }
++                           });
++                         });
++  }
++}
+diff --git a/tools/pause_menu_host.hpp b/tools/pause_menu_host.hpp
+new file mode 100644
+--- /dev/null
++++ b/tools/pause_menu_host.hpp
+@@ -0,0 +1,20 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++namespace moderngekko {
++struct RuntimeConfig;
++class ModManager;
++namespace pause_menu {
++void Initialize(const RuntimeConfig &config, ModManager *mods);
++void Shutdown();
++void Draw();
++} // namespace pause_menu
++} // namespace moderngekko
++
++void Host_PauseMenuTick();
++void Host_PauseMenuKey(int virtual_key, bool down);
++void Host_PauseMenuFocusLost();
++bool Host_IsPauseMenuOpen();
++void Host_RequestPauseMenuToggle();
++bool Host_IsPauseMenuInputBlocked();
++void Host_TogglePauseMenuFullscreen();
+diff --git a/tools/pause_menu_policy.hpp b/tools/pause_menu_policy.hpp
+new file mode 100644
+--- /dev/null
++++ b/tools/pause_menu_policy.hpp
+@@ -0,0 +1,208 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <cstddef>
++
++namespace moderngekko::pause_menu {
++
++enum class Page { Closed, Home, Settings, Controls, QuitConfirm };
++enum class Action {
++  None,
++  Resume,
++  Settings,
++  Controls,
++  SaveCheckpoint,
++  Quit,
++  AdjustSetting,
++  ToggleFullscreen,
++  ToggleVsync,
++  ToggleFps
++};
++
++struct Input {
++  bool escape = false;
++  bool up = false;
++  bool down = false;
++  bool accept = false;
++  bool back = false;
++  bool start = false;
++  bool select = false;
++  // Include every held game button, not only the menu bindings.
++  bool any_game_button = false;
++  bool game_running = true;
++};
++
++class Policy {
++public:
++  Page page() const { return page_; }
++  std::size_t focus() const { return focus_; }
++  bool is_open() const { return page_ != Page::Closed; }
++  bool blocks_game_input() const { return is_open() || release_gate_; }
++  void set_rows(std::size_t rows) {
++    if (page_ == Page::Settings || page_ == Page::Controls)
++      custom_rows_ = rows;
++  }
++  void reset_edges(const Input &pressed) {
++    if (pressed.escape)
++      previous_.escape = false;
++    if (pressed.accept)
++      previous_.accept = false;
++    if (pressed.back)
++      previous_.back = false;
++    if (pressed.up || pressed.down)
++      direction_ = 0;
++  }
++
++  std::size_t row_count() const {
++    if (custom_rows_ && (page_ == Page::Settings || page_ == Page::Controls))
++      return custom_rows_;
++    switch (page_) {
++    case Page::Home:
++      return 5;
++    case Page::Settings:
++      return 4;
++    case Page::Controls:
++      return 1;
++    case Page::QuitConfirm:
++      return 2;
++    default:
++      return 0;
++    }
++  }
++
++  void open() {
++    page_ = Page::Home;
++    focus_ = 0;
++    custom_rows_ = 0;
++    release_gate_ = true;
++  }
++  void close() {
++    page_ = Page::Closed;
++    focus_ = 0;
++    release_gate_ = true;
++  }
++
++  Action back() {
++    if (!is_open())
++      return Action::None;
++    if (page_ == Page::Home) {
++      close();
++      return Action::Resume;
++    }
++    page_ = Page::Home;
++    focus_ = 0;
++    custom_rows_ = 0;
++    return Action::None;
++  }
++
++  Action activate(std::size_t row) {
++    if (row >= row_count())
++      return Action::None;
++    focus_ = row;
++    switch (page_) {
++    case Page::Home:
++      switch (row) {
++      case 0:
++        close();
++        return Action::Resume;
++      case 1:
++        page_ = Page::Settings;
++        focus_ = 0;
++        return Action::Settings;
++      case 2:
++        page_ = Page::Controls;
++        focus_ = 0;
++        return Action::Controls;
++      case 3:
++        return Action::SaveCheckpoint;
++      case 4:
++        page_ = Page::QuitConfirm;
++        focus_ = 0;
++        return Action::None;
++      }
++      break;
++    case Page::Settings:
++      return row + 1 == row_count() ? back() : Action::AdjustSetting;
++    case Page::Controls:
++      return row + 1 == row_count() ? back() : Action::AdjustSetting;
++    case Page::QuitConfirm:
++      if (row == 0)
++        return back();
++      close();
++      return Action::Quit;
++    default:
++      break;
++    }
++    return Action::None;
++  }
++
++  // now_seconds is an absolute monotonic timestamp. Held navigation repeats
++  // after 350 ms, then every 100 ms. Accept/back/toggle remain edge triggered.
++  Action update(const Input &input, double now_seconds, std::size_t rows = 0) {
++    const bool held = input.escape || input.up || input.down || input.accept ||
++                      input.back || input.start || input.select ||
++                      input.any_game_button;
++    if (!held)
++      release_gate_ = false;
++    const bool escape_edge = input.escape && !previous_.escape;
++    const bool accept_edge = input.accept && !previous_.accept;
++    const bool back_edge = input.back && !previous_.back;
++    const bool chord = input.start && input.select && chord_armed_;
++    if (!input.start && !input.select)
++      chord_armed_ = true;
++    if (chord)
++      chord_armed_ = false;
++    previous_ = input;
++    if (!input.game_running) {
++      if (is_open())
++        close();
++      direction_ = 0;
++      return Action::None;
++    }
++    if (escape_edge || chord) {
++      direction_ = 0;
++      if (is_open()) {
++        close();
++        return Action::Resume;
++      }
++      open();
++      return Action::None;
++    }
++    if (!is_open()) {
++      direction_ = 0;
++      return Action::None;
++    }
++    if (back_edge)
++      return back();
++    if (rows && (page_ == Page::Settings || page_ == Page::Controls))
++      custom_rows_ = rows;
++    const auto count = rows ? rows : row_count();
++    if (count == 0)
++      return Action::None;
++    focus_ %= count;
++    const int direction = input.up == input.down ? 0 : input.up ? -1 : 1;
++    if (direction == 0)
++      direction_ = 0;
++    else if (direction != direction_ || now_seconds >= next_repeat_) {
++      focus_ =
++          direction < 0 ? (focus_ + count - 1) % count : (focus_ + 1) % count;
++      next_repeat_ = now_seconds + (direction != direction_ ? 0.35 : 0.10);
++      direction_ = direction;
++    }
++    if (accept_edge)
++      return activate(focus_);
++    return Action::None;
++  }
++
++private:
++  Page page_ = Page::Closed;
++  std::size_t focus_ = 0;
++  std::size_t custom_rows_ = 0;
++  Input previous_{};
++  bool release_gate_ = false;
++  bool chord_armed_ = true;
++  int direction_ = 0;
++  double next_repeat_ = 0;
++};
++
++} // namespace moderngekko::pause_menu
+diff --git a/tests/pause_menu_policy_test.cpp b/tests/pause_menu_policy_test.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/pause_menu_policy_test.cpp
+@@ -0,0 +1,114 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#include "pause_menu_policy.hpp"
++
++#define CHECK(condition)                                                       \
++  do {                                                                         \
++    if (!(condition))                                                          \
++      return __LINE__;                                                         \
++  } while (false)
++
++using namespace moderngekko::pause_menu;
++
++int main() {
++  Policy menu;
++  Input input;
++  input.accept = true;
++  CHECK(menu.update(input, 0) == Action::None);
++  CHECK(!menu.is_open());
++  input = {};
++  input.escape = true;
++  menu.update(input, 1);
++  CHECK(menu.page() == Page::Home && menu.focus() == 0);
++  menu.update(input, 2);
++  CHECK(menu.is_open());
++  input = {};
++  menu.update(input, 2.1);
++  input.up = true;
++  menu.update(input, 3);
++  CHECK(menu.focus() == 4);
++  menu.update(input, 3.2);
++  CHECK(menu.focus() == 4);
++  menu.update(input, 3.36);
++  CHECK(menu.focus() == 3);
++  menu.update(input, 3.40);
++  CHECK(menu.focus() == 3);
++  menu.update(input, 3.47);
++  CHECK(menu.focus() == 2);
++  input.down = true;
++  menu.update(input, 4);
++  CHECK(menu.focus() == 2);
++  input = {};
++  menu.update(input, 4.1);
++  menu.activate(4);
++  CHECK(menu.page() == Page::QuitConfirm && menu.focus() == 0);
++  CHECK(menu.activate(0) == Action::None && menu.page() == Page::Home);
++  menu.activate(1);
++  CHECK(menu.page() == Page::Settings);
++  CHECK(menu.activate(0) == Action::AdjustSetting);
++  menu.update({}, 4.2, 6);
++  CHECK(menu.activate(4) == Action::AdjustSetting);
++  menu.activate(5);
++  CHECK(menu.page() == Page::Home);
++  menu.activate(2);
++  CHECK(menu.page() == Page::Controls);
++  menu.back();
++  CHECK(menu.activate(3) == Action::SaveCheckpoint);
++  CHECK(menu.is_open());
++  input.escape = true;
++  CHECK(menu.update(input, 5) == Action::Resume);
++  CHECK(!menu.is_open() && menu.blocks_game_input());
++  input = {};
++  input.any_game_button = true;
++  menu.update(input, 5.1);
++  CHECK(menu.blocks_game_input());
++  input = {};
++  menu.update(input, 5.2);
++  CHECK(!menu.blocks_game_input());
++  input.start = true;
++  menu.update(input, 6);
++  CHECK(!menu.is_open());
++  input.select = true;
++  menu.update(input, 6.1);
++  CHECK(menu.is_open());
++  menu.update(input, 7);
++  CHECK(menu.is_open());
++  input.select = false;
++  menu.update(input, 7.1);
++  input.select = true;
++  menu.update(input, 7.2);
++  CHECK(menu.is_open());
++  input = {};
++  menu.update(input, 7.3);
++  input.start = input.select = true;
++  CHECK(menu.update(input, 8) == Action::Resume);
++  input = {};
++  menu.update(input, 8.1);
++  input.game_running = false;
++  input.escape = true;
++  CHECK(menu.update(input, 9) == Action::None && !menu.is_open());
++  input = {};
++  menu.update(input, 9.1);
++  menu.open();
++  menu.activate(4);
++  CHECK(menu.activate(1) == Action::Quit && !menu.is_open());
++  menu.open();
++  input = {};
++  input.accept = true;
++  CHECK(menu.update(input, 10) == Action::Resume);
++  CHECK(menu.update(input, 11) == Action::None);
++  menu.open();
++  input = {};
++  input.down = true;
++  menu.update(input, 12);
++  CHECK(menu.focus() == 1);
++  menu.reset_edges(input); // Key-up/down may both arrive between UI polls.
++  menu.update(input, 12.01);
++  CHECK(menu.focus() == 2);
++  menu.open();
++  menu.activate(1);
++  menu.set_rows(17);
++  CHECK(menu.activate(15) == Action::AdjustSetting);
++  CHECK(menu.activate(16) == Action::None);
++  CHECK(menu.page() == Page::Home);
++  return 0;
++}

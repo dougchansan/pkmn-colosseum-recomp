@@ -49,13 +49,24 @@ git -C "$MODERNGEKKO" merge-base --is-ancestor "$MODERN_BASE" HEAD
 git -C "$RECOMPCORE" merge-base --is-ancestor "$RECOMP_BASE" HEAD
 git -C "$DOLRECOMP" merge-base --is-ancestor "$DOLRECOMP_BASE" HEAD
 
+# Fork commits whose history already contains a patch (manifest.json
+# integratedIn): a checkout at or after one of them needs no patching.
+MODERN_INTEGRATED=2341d4ed4d340237cdf755ae8f9b0a8b7b4f5275
+RECOMP_INTEGRATED=d5dffca7011dbb0321a866e0f61d5552c9cd17da
+
 apply_one()
 {
     repository=$1
     patch=$2
     component=$3
     ignore_submodules=${4:-no}
+    integrated=${5:-}
 
+    if [ -n "$integrated" ] &&
+        git -C "$repository" merge-base --is-ancestor "$integrated" HEAD >/dev/null 2>&1; then
+        echo "$component host patch is part of this checkout's history."
+        return
+    fi
     if git -C "$repository" apply --reverse --check "$patch" >/dev/null 2>&1; then
         echo "$component host patch is already applied."
         return
@@ -75,5 +86,5 @@ apply_one()
 }
 
 apply_one "$DOLRECOMP" "$BUNDLE_ROOT/dolrecomp.patch" DolRecomp
-apply_one "$RECOMPCORE" "$BUNDLE_ROOT/recompcore.patch" RecompCore yes
-apply_one "$MODERNGEKKO" "$BUNDLE_ROOT/moderngekko.patch" ModernGekko yes
+apply_one "$RECOMPCORE" "$BUNDLE_ROOT/recompcore.patch" RecompCore yes "$RECOMP_INTEGRATED"
+apply_one "$MODERNGEKKO" "$BUNDLE_ROOT/moderngekko.patch" ModernGekko yes "$MODERN_INTEGRATED"

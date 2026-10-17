@@ -126,6 +126,35 @@ case "$MODULE_60FPS" in /*) ;; *) MODULE_60FPS=$ROOT/$MODULE_60FPS ;; esac
     exit 1
 }
 
+# Hook-aware modules (HOOK_AWARE=0 keeps the modules above). A plain module
+# sends every chunk holding a mod hook through the fallback, so the hooks fire;
+# the hook-aware rebuild returns to the dispatcher only at the addresses this
+# repo's mods hook or patch and runs everything else natively (about 3x the
+# speed with the camera mod loaded). If a loaded mod hooks anything else, the
+# runtime notices and runs the module the plain way.
+hook_aware_module() {
+    built_dir=$(dirname -- "$1")
+    out=$built_dir/hook-aware
+    python3 "$ROOT/scripts/make-hook-aware-module.py" \
+        --src "$built_dir/dolrecomp-output/generated" --dst "$out/generated" \
+        --functions "$ROOT/patches/GC6E01-functions.csv" --mods "$ROOT/mods" \
+        --idle-continuation 800FEB9C >&2
+    cmake -S "$MODERNGEKKO/vendor/dolphin/module-template" -B "$out/build" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DGAME_ID=GC6E01 \
+        "-DGENERATED_DIR=$out/generated" -DRECOMPCORE_MODULE_OPT_LEVEL=2 \
+        -DRECOMPCORE_MODULE_ENABLE_IPO=ON >&2
+    cmake --build "$out/build" --parallel "$JOBS" >&2
+    [ -f "$out/build/$(basename -- "$1")" ] || {
+        echo "hook-aware module not built: $out/build/$(basename -- "$1")" >&2
+        exit 1
+    }
+    printf '%s\n' "$out/build/$(basename -- "$1")"
+}
+if [ "${HOOK_AWARE:-1}" != 0 ]; then
+    MODULE=$(hook_aware_module "$MODULE")
+    MODULE_60FPS=$(hook_aware_module "$MODULE_60FPS")
+fi
+
 mkdir -p "$PACKAGE/User/GameSettings" "$PACKAGE/Mods/Optional"
 find "$PACKAGE" -mindepth 1 -maxdepth 1 ! -name User -exec rm -rf {} +
 case "$(uname -s)" in
@@ -145,6 +174,26 @@ for source in "$MOD_BUILD"/packages/*.mgm; do
     cp -R "$source/host-patches" "$target/"
 done
 
+# The HD packs (HD_PACKS=0 skips them) are downloaded, not stored in the
+# repository. A pack whose download fails is left out with a warning instead
+# of failing setup.
+HD_PACK_ROOT=$ROOT/build/hd-packs
+COMMUNITY_PACK=false
+mkdir -p "$PACKAGE/User/Load/Textures"
+if [ "${HD_PACKS:-1}" != 0 ]; then
+    python3 "$ROOT/scripts/fetch-hd-packs.py" --dest "$HD_PACK_ROOT" ||
+        echo "warning: some HD texture packs could not be downloaded; setup continues without them" >&2
+    if [ -d "$HD_PACK_ROOT/ui-textures/GC6E01" ]; then
+        mkdir -p "$PACKAGE/User/Load/Textures/GC6E01"
+        cp "$HD_PACK_ROOT/ui-textures/GC6E01/"*.png "$PACKAGE/User/Load/Textures/GC6E01/"
+    fi
+    if [ -f "$HD_PACK_ROOT/Pokemon Colosseum HD Pack.zip" ]; then
+        mkdir -p "$PACKAGE/User/ResourcePacks"
+        cp "$HD_PACK_ROOT/Pokemon Colosseum HD Pack.zip" "$PACKAGE/User/ResourcePacks/"
+        COMMUNITY_PACK=true
+    fi
+fi
+
 if [ ! -f "$PACKAGE/User/config.ini" ]; then
     cat >"$PACKAGE/User/config.ini" <<EOF
 [Video]
@@ -155,6 +204,8 @@ aspect_ratio=1
 ultrawide_efb_scale=5
 text_upscale=false
 minimap_high_contrast=false
+hires_textures=true
+community_hd_texture_pack=$COMMUNITY_PACK
 fullscreen=false
 show_fps_in_title=true
 [QualityOfLife]

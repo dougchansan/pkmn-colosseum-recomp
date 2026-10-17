@@ -87,12 +87,22 @@ function Invoke-Patch {
         [Parameter(Mandatory = $true)][string]$PatchPath,
         [Parameter(Mandatory = $true)][string]$ExpectedSha256,
         [Parameter(Mandatory = $true)][string]$Component,
-        [switch]$IgnoreSubmodules
+        [switch]$IgnoreSubmodules,
+        # A fork commit whose history already contains this patch (manifest integratedIn).
+        [string]$IntegratedIn = ''
     )
 
     $actualSha256 = (Get-FileHash -LiteralPath $PatchPath -Algorithm SHA256).Hash
     if ($actualSha256 -ne $ExpectedSha256) {
         throw "$Component patch checksum mismatch. Expected $ExpectedSha256, got $actualSha256."
+    }
+
+    if ($IntegratedIn) {
+        $integrated = Invoke-Git -Repository $Repository -Arguments @('merge-base', '--is-ancestor', $IntegratedIn, 'HEAD') -AllowFailure
+        if ($integrated.ExitCode -eq 0) {
+            Write-Output "$Component host patch is part of this checkout's history."
+            return
+        }
     }
 
     $reverse = Invoke-Git -Repository $Repository -Arguments @('apply', '--reverse', '--check', $PatchPath) -AllowFailure
@@ -128,8 +138,8 @@ Test-CompatibleBase -Repository $dolRecomp -BaseCommit $manifest.dolRecomp.baseC
 Test-CompatibleBase -Repository $modernGekko -BaseCommit $manifest.modernGekko.baseCommit -Component 'ModernGekko'
 
 Invoke-Patch -Repository $dolRecomp -PatchPath (Join-Path $bundleRoot $manifest.dolRecomp.patch) -ExpectedSha256 $manifest.dolRecomp.sha256 -Component 'DolRecomp'
-Invoke-Patch -Repository $recompCore -PatchPath (Join-Path $bundleRoot $manifest.recompCore.patch) -ExpectedSha256 $manifest.recompCore.sha256 -Component 'RecompCore' -IgnoreSubmodules
-Invoke-Patch -Repository $modernGekko -PatchPath (Join-Path $bundleRoot $manifest.modernGekko.patch) -ExpectedSha256 $manifest.modernGekko.sha256 -Component 'ModernGekko' -IgnoreSubmodules
+Invoke-Patch -Repository $recompCore -PatchPath (Join-Path $bundleRoot $manifest.recompCore.patch) -ExpectedSha256 $manifest.recompCore.sha256 -Component 'RecompCore' -IgnoreSubmodules -IntegratedIn $manifest.recompCore.integratedIn
+Invoke-Patch -Repository $modernGekko -PatchPath (Join-Path $bundleRoot $manifest.modernGekko.patch) -ExpectedSha256 $manifest.modernGekko.sha256 -Component 'ModernGekko' -IgnoreSubmodules -IntegratedIn $manifest.modernGekko.integratedIn
 
 if ($CheckOnly) {
     Write-Output 'Host patch compatibility check passed; no files were changed.'

@@ -61,6 +61,57 @@ add_colosseum_patch_mod(
     pokemon-colosseum-fastmath
     "Pokemon Colosseum Native Matrix Math"
     fastmath_mod.c)
+add_colosseum_patch_mod(
+    colosseum_freecam_mod
+    pokemon-colosseum-freecam
+    "Pokemon Colosseum C-Stick Free Camera"
+    freecam_mod.c)
+# Capture-only: stages the attract-video remake (research/attract).
+add_colosseum_patch_mod(
+    colosseum_attract_stage_mod
+    pokemon-colosseum-attract-stage
+    "Pokemon Colosseum Attract Staging"
+    attract_stage_mod.c)
+# Colosseum Battle between two Colosseum saves (player 2 in the GBA slot).
+add_colosseum_patch_mod(
+    colosseum_online_battle_mod
+    pokemon-colosseum-online-battle
+    "Pokemon Colosseum Online Battle"
+    online_battle_mod.c)
+target_sources(colosseum_online_battle_mod PRIVATE online_battle_net.c)
+if(WIN32)
+    target_link_libraries(colosseum_online_battle_mod PRIVATE ws2_32)
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(colosseum_online_battle_mod PRIVATE Threads::Threads)
+endif()
+option(COLOSSEUM_FREECAM_TRACE "Log free-camera hook diagnostics" OFF)
+if(COLOSSEUM_FREECAM_TRACE)
+    target_compile_definitions(colosseum_freecam_mod PRIVATE FREECAM_TRACE=1)
+endif()
+add_custom_command(TARGET colosseum_freecam_mod POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/menu-host"
+        "$<TARGET_FILE_DIR:colosseum_freecam_mod>/menu-host"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/freecam-runtime.patch"
+        "${CMAKE_CURRENT_SOURCE_DIR}/FREECAM.md"
+        "$<TARGET_FILE_DIR:colosseum_freecam_mod>")
+if(NOT MSVC)
+    target_link_libraries(colosseum_freecam_mod PRIVATE m)
+endif()
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(colosseum_freecam_test tests/freecam_test.c)
+    target_include_directories(colosseum_freecam_test PRIVATE
+        "${MODERNGEKKO_SOURCE_DIR}/include")
+    set_target_properties(colosseum_freecam_test PROPERTIES
+        C_STANDARD 11 C_STANDARD_REQUIRED YES)
+    if(NOT MSVC)
+        target_link_libraries(colosseum_freecam_test PRIVATE m)
+    endif()
+    add_test(NAME colosseum_freecam COMMAND colosseum_freecam_test)
+endif()
 option(COLOSSEUM_FASTMATH_TRACE "Log that the native matrix patches are being reached" OFF)
 if(COLOSSEUM_FASTMATH_TRACE)
     target_compile_definitions(colosseum_fastmath_mod PRIVATE FASTMATH_TRACE=1)

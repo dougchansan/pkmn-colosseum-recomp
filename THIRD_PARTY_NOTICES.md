@@ -1,6 +1,6 @@
 # Third-party notices
 
-Pokemon Colosseum Recomp version 1.1.0 combines original project source and
+Pokemon Colosseum Recomp version 1.2.0 combines original project source and
 patches with upstream open-source projects that are fetched at setup time.
 Copyright and license notices in upstream source files remain in effect.
 

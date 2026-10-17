@@ -7,3 +7,10 @@ guest,symbol,note
 8000540C,dolrecomp_native_memset,memset
 801A85F0,dolrecomp_native_hsd_mtx_scaled_add,HSD_MtxScaledAdd
 8009B2D0,dolrecomp_native_dcflushrange,DCFlushRange - ~50% of guest CPU in battle-mid by PC sampling; batches the per-line icache invalidation into one range call
+800BD4B4,dolrecomp_native_gx_load_pos_mtx_imm,GXLoadPosMtxImm - ~100k calls/s in battle; streams straight into the gather pipe
+800BD504,dolrecomp_native_gx_load_nrm_mtx_imm,GXLoadNrmMtxImm - ~100k calls/s in battle
+800BD58C,dolrecomp_native_gx_load_tex_mtx_imm,GXLoadTexMtxImm
+800D4F98,dolrecomp_native_gs_queue_command,fn_800D4F98 GS command recorder (varargs) - checked against generated code
+800BD2E0,dolrecomp_native_gx_set_projection,GXSetProjection
+800BD554,dolrecomp_native_gx_set_current_mtx,GXSetCurrentMtx
+800BD898,dolrecomp_native_gx_set_matrix_index,__GXSetMatrixIndex

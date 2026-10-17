@@ -3,6 +3,120 @@
 All notable release changes are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-10-17
+
+Feature release: play with other people. Game Boy Advance link play with an
+emulated GBA, netplay across Windows and macOS, and online Colosseum Battles
+between two players' own saves. Saves, savestates and setup stay compatible
+with 1.2.0. Experimental: tested between machines on one home network, not yet
+over the internet.
+
+### Online Colosseum Battle (new)
+- Battle a friend's own save, each player on their own game: Colosseum Battle >
+  Gang Battle > the two-controller match. Choices travel over one TCP
+  connection; nothing runs in lockstep, so latency only shows while waiting.
+- Launcher ONLINE BATTLE tab: the other player's address and TCP port (27100),
+  which player the host is, Host / Join.
+- Turn timer (off, 30 s, 1 min, 2 min) and what a timeout does (the game
+  chooses, or give up), in the launcher and the pause menu's Online battle
+  page. Player 1's settings apply to both players.
+- On-screen status: waiting for the other player, connecting, connection lost,
+  different version or rules, out of sync.
+- Both games check every turn that they are still in step; a dropped
+  connection ends the battle and both sides reconnect.
+
+### Game Boy Advance link
+- An emulated GBA (mGBA) on a controller socket, with your own GBA BIOS and
+  Ruby / Sapphire / FireRed / LeafGreen / Emerald dump: trade at the Phenac
+  Pokemon Center basement, and GBA players in Colosseum Battle.
+- GBA screens can be see-through, moved, resized or opened in their own
+  window (Windows and macOS), with player numbers and opacity.
+- L + R + Start + Select resets a GBA (its power switch).
+- Players panel (4 sockets, a device per socket) and an audio mixer.
+- Launcher rows for the GBA game, BIOS and a GBA for player 2.
+
+### Netplay
+- Netplay with GameCube controller ports, tested between Windows and macOS,
+  including GBA link play with save transfer.
+
+### Launcher and menus
+- Themed launcher in the game's style, memory card library with area names and
+  play time, save-state pictures and names, deleting, a controller keyboard.
+- HD menu text; input overlays sit stacked in the top-left margin.
+- Mods can read settings and show status lines (mod host ABI 2).
+
+### Known limitations
+- Online battles: singles tested; doubles targeting is not mapped. Not yet
+  tested over the internet (only between machines on one network).
+- On macOS the game cannot open LAN connections until macOS grants it Local
+  Network access (System Settings > Privacy & Security > Local Network). Until
+  then the Mac can still host, or wait as player 2 with Host plays as Player 2.
+- After a faint, the online replacement reaches the other player when the
+  next turn starts.
+
+## [1.2.0] - 2026-10-12
+
+Feature release: free exploration with a camera of your own, an in-game menu,
+120/240 FPS, new lighting options and Linux at Windows speed. Saves, savestates
+and setup stay compatible with 1.1.0. Measured on one Windows machine (RX 9070)
+and one Linux machine (RTX 3090); the shape of the change, not a promise for any
+particular system.
+
+### Camera and exploration (camera mod)
+- Free camera, third-person orbit with D-pad zoom, and first-person view with a
+  centre dot, depth of field and field of view; the camera keeps your framing
+  through doors and city travel and works in fixed-camera interiors.
+- First-person look: turn speed follows the camera sensitivity, a response curve
+  (small stick moves aim finely) and turn acceleration (Settings > Look
+  acceleration: Off / Normal / Fast).
+- Photo mode, a run toggle for Wes and Rui, text and battle speed, enemy level
+  difficulty and a time-of-day cycle.
+
+### Frame rate and smoothness
+- 120 and 240 FPS through frame interpolation, with dual-core wall-clock pacing.
+- The 240 Hz camera predicts turns between game frames and now fades the
+  correction at each new frame instead of jumping (240 Hz spin test: backward
+  jumps 40 -> 0).
+- The window title shows the presented rate next to the game FPS.
+
+### Graphics
+- Ambient occlusion (Low / Medium / High), sky- and water-aware, skipping
+  characters through per-model object IDs.
+- Visual styles: Vivid and Cinematic (bloom, distance haze, filmic tone).
+- Soft shadows, exclusive fullscreen, depth of field levels.
+- Radeon settings (Anti-Lag, Chill, Boost, sharpening, Enhanced Sync, Fluid
+  Motion Frames) and NVIDIA Reflex (Vulkan; Off / On / On + Boost).
+
+### Menus and start-up
+- Pause menu (Esc or Start + Z): settings, controls, Shadow Pokemon tracker,
+  photo mode, checkpoints, restart and quit, in the game's own style.
+- Developer page: debug views (occlusion mask, depth, object IDs), an info
+  overlay, game speed, motion and camera spin tests, and the retail game's own
+  leftover debug displays (CPU meter, collision and event zones, shadow frames).
+- Quick boot from a cached title snapshot, skip intro movies, fast loading.
+- Attract video replacement playback (the in-engine remake itself is not done).
+
+### Linux and build
+- Linux setup builds hook-aware game modules: only the addresses the loaded mods
+  hook go through the dispatcher, and the game's idle loop is detected again.
+  RTX 3090 with the camera mod, 60 FPS case: speed 0.36 -> 1.007, level with
+  the Windows module. The runtime checks a module's hook list against the
+  loaded mods and falls back to the plain path if one hooks anything else.
+- The branch builds as committed on Linux (a half-committed JIT change is out);
+  submodules fetch from the Colosseum forks and the host-patch scripts recognise
+  a fork checkout.
+- `tools/nvbench`: the NVIDIA / Radeon benchmark used for these numbers.
+
+### Known limitations
+- NVIDIA Reflex is off by default: on the headless RTX 3090 test it lowered the
+  frame rate and raised latency. Not yet measured with a display attached.
+- 240 FPS at 6x resolution in 32:9 holds about 46-48 game FPS on an RX 9070;
+  with ambient occlusion High and Cinematic it drops to 30.
+- The object-ID debug view labels the map as an object (per-slot labels to do).
+- Windows setup does not build hook-aware modules yet (Linux only).
+- The game's own debug-display toggles can read ON after a floor change resets
+  them; toggling twice resyncs.
+
 ## [1.1.0] - 2026-09-15
 
 Performance release. The recompiler moved onto current upstream, and three

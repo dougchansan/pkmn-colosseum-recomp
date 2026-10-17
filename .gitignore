@@ -88,3 +88,10 @@ Thumbs.db
 
 # build transcripts from the toolchain/module scripts
 build-*.log
+
+# Local ROM-derived assets - never committed
+/local_assets/
+*.cci
+*.3ds
+*.3dz
+*.cia

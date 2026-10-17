@@ -1,0 +1,111 @@
+diff --git a/Source/Core/VideoCommon/OnScreenUI.cpp b/Source/Core/VideoCommon/OnScreenUI.cpp
+--- a/Source/Core/VideoCommon/OnScreenUI.cpp
++++ b/Source/Core/VideoCommon/OnScreenUI.cpp
+@@ -32,7 +32,9 @@
+ #include "VideoCommon/VideoConfig.h"
+ 
+ #include <inttypes.h>
++#include <algorithm>
+ #include <atomic>
++#include <cmath>
+ #include <mutex>
+ 
+ #include <imgui.h>
+@@ -44,6 +46,14 @@
+ {
+ std::atomic<ExternalOverlayDrawCallback> s_external_overlay_draw_callback{
+     nullptr};
++
++float GetOverlayScale(float dpi_scale, u32 viewport_height)
++{
++  // DisplaySize is already in physical pixels. Multiplying its scale by DPI would count
++  // a high-DPI backbuffer twice; use DPI as the minimum readable size instead.
++  return std::clamp(std::max(dpi_scale, static_cast<float>(viewport_height) / 1080.0f),
++                    0.5f, 4.0f);
++}
+ }
+ 
+ void SetExternalOverlayDrawCallback(ExternalOverlayDrawCallback callback)
+@@ -221,6 +231,10 @@
+   io.DisplaySize =
+       ImVec2(static_cast<float>(m_backbuffer_width), static_cast<float>(m_backbuffer_height));
+   io.DeltaTime = time_diff_secs;
++
++  // Resize and monitor changes can happen without recreating the UI or changing DPI.
++  if (ImGui::GetStyle().FontScaleMain != GetOverlayScale(m_backbuffer_scale, height))
++    SetScale(m_backbuffer_scale);
+ 
+   ImGui::NewFrame();
+ }
+@@ -433,7 +447,7 @@
+   auto lock = GetImGuiLock();
+ 
+   auto& perf_metrics = Core::System::GetInstance().GetPerfMetrics();
+-  perf_metrics.DrawImGuiStats(m_backbuffer_scale);
++  perf_metrics.DrawImGuiStats(ImGui::GetStyle().FontScaleMain);
+   DrawDebugText();
+   OSD::DrawMessages();
+   DrawChallengesAndLeaderboards();
+@@ -549,6 +563,8 @@
+ 
+ void OnScreenUI::SetScale(float backbuffer_scale)
+ {
++  if (!std::isfinite(backbuffer_scale) || backbuffer_scale <= 0.0f)
++    backbuffer_scale = 1.0f;
+   ImGui::GetIO().DisplayFramebufferScale.x = backbuffer_scale;
+   ImGui::GetIO().DisplayFramebufferScale.y = backbuffer_scale;
+ 
+@@ -556,9 +572,11 @@
+   // Reset the style first so that the scale is applied to the base style, not an already-scaled one
+   ImGuiStyle& style = ImGui::GetStyle();
+   style = {};
+-  style.FontScaleMain = backbuffer_scale;
++  const float overlay_scale = GetOverlayScale(backbuffer_scale, m_backbuffer_height);
++  style.FontSizeBase = static_cast<float>(Config::Get(Config::MAIN_OSD_FONT_SIZE));
++  style.FontScaleMain = overlay_scale;
+   style.WindowRounding = 7.0f;
+-  style.ScaleAllSizes(backbuffer_scale);
++  style.ScaleAllSizes(overlay_scale);
+ 
+   m_backbuffer_scale = backbuffer_scale;
+ }
+diff --git a/Source/Core/VideoCommon/Statistics.cpp b/Source/Core/VideoCommon/Statistics.cpp
+--- a/Source/Core/VideoCommon/Statistics.cpp
++++ b/Source/Core/VideoCommon/Statistics.cpp
+@@ -45,11 +45,25 @@
+ 
+ void Statistics::Display() const
+ {
+-  const float scale = ImGui::GetIO().DisplayFramebufferScale.x;
++  const float scale = ImGui::GetStyle().FontScaleMain;
++  static float last_scale = 0.0f;
++  static ImVec2 last_size;
++  if (last_scale > 0.0f && scale != last_scale)
++  {
++    const float ratio = scale / last_scale;
++    last_size = ImVec2(last_size.x * ratio, last_size.y * ratio);
++    ImGui::SetNextWindowSize(last_size);
++  }
+   ImGui::SetNextWindowPos(ImVec2(10.0f * scale, 10.0f * scale), ImGuiCond_FirstUseEver);
+   ImGui::SetNextWindowSizeConstraints(ImVec2(275.0f * scale, 400.0f * scale),
+                                       ImGui::GetIO().DisplaySize);
+-  if (!ImGui::Begin("Statistics", nullptr, ImGuiWindowFlags_NoNavInputs))
++  const bool visible = ImGui::Begin("Statistics", nullptr, ImGuiWindowFlags_NoNavInputs);
++  // Capture the constrained, user-resizable size after Begin, before the next scale change.
++  // Keep the expanded height when the user collapses the window.
++  if (!ImGui::IsWindowCollapsed())
++    last_size = ImGui::GetWindowSize();
++  last_scale = scale;
++  if (!visible)
+   {
+     ImGui::End();
+     return;
+@@ -180,7 +194,7 @@
+ void Statistics::DisplayScissor()
+ {
+   // TODO: This is the same position as the regular statistics text
+-  const float scale = ImGui::GetIO().DisplayFramebufferScale.x;
++  const float scale = ImGui::GetStyle().FontScaleMain;
+   ImGui::SetNextWindowPos(ImVec2(10.0f * scale, 10.0f * scale), ImGuiCond_FirstUseEver);
+ 
+   if (!ImGui::Begin("Scissor Rectangles", nullptr, ImGuiWindowFlags_AlwaysAutoResize))

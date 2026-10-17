@@ -1,5 +1,8 @@
 # Pokemon Colosseum ModernGekko mods
 
+The optional [C-stick camera mod](FREECAM.md) adds third-person orbit control
+and camera-relative walking by default. Z + Y toggles detached free flight.
+
 These packages use ModernGekko's code-mod ABI and directory convention:
 
 ```text

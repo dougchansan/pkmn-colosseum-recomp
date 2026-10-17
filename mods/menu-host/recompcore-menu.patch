@@ -1,0 +1,171 @@
+diff --git a/Source/Core/Core/HW/GCPad.h b/Source/Core/Core/HW/GCPad.h
+--- a/Source/Core/Core/HW/GCPad.h
++++ b/Source/Core/Core/HW/GCPad.h
+@@ -26,6 +26,10 @@
+ InputConfig* GetConfig();
+ 
+ GCPadStatus GetStatus(int pad_num);
++// Optional frontend input routing. Called after polling with neutral defaults
++// available in GCPadStatus; it must not call back into the controller system.
++using StatusFilter = void (*)(int pad_num, GCPadStatus& status);
++void SetStatusFilter(StatusFilter filter);
+ ControllerEmu::ControlGroup* GetGroup(int pad_num, PadGroup group);
+ void Rumble(int pad_num, ControlState strength);
+ void ResetRumble(int pad_num);
+diff --git a/Source/Core/Core/HW/GCPad.cpp b/Source/Core/Core/HW/GCPad.cpp
+--- a/Source/Core/Core/HW/GCPad.cpp
++++ b/Source/Core/Core/HW/GCPad.cpp
+@@ -2,6 +2,7 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ #include "Core/HW/GCPad.h"
++#include <atomic>
+ 
+ #include "Common/Common.h"
+ #include "Core/HW/GCPadEmu.h"
+@@ -11,6 +12,11 @@
+ 
+ namespace Pad
+ {
++static std::atomic<StatusFilter> s_status_filter{nullptr};
++void SetStatusFilter(StatusFilter filter)
++{
++  s_status_filter.store(filter, std::memory_order_release);
++}
+ static InputConfig s_config("GCPadNew", _trans("Pad"), "GCPad", "Pad");
+ InputConfig* GetConfig()
+ {
+@@ -55,7 +61,10 @@
+ 
+ GCPadStatus GetStatus(int pad_num)
+ {
+-  return static_cast<GCPad*>(s_config.GetController(pad_num))->GetInput();
++  auto status = static_cast<GCPad*>(s_config.GetController(pad_num))->GetInput();
++  if (const auto filter = s_status_filter.load(std::memory_order_acquire))
++    filter(pad_num, status);
++  return status;
+ }
+ 
+ ControllerEmu::ControlGroup* GetGroup(int pad_num, PadGroup group)
+diff --git a/Source/Core/DolphinNoGUI/Platform.h b/Source/Core/DolphinNoGUI/Platform.h
+--- a/Source/Core/DolphinNoGUI/Platform.h
++++ b/Source/Core/DolphinNoGUI/Platform.h
+@@ -22,6 +22,7 @@
+   virtual void SetTitle(const std::string& title);
+   virtual void MainLoop() = 0;
+   virtual void SaveWindowGeometry() {}
++  virtual void ToggleFullscreenFromMenu() {}
+ 
+   virtual WindowSystemInfo GetWindowSystemInfo() const = 0;
+ 
+diff --git a/Source/Core/DolphinNoGUI/PlatformWin32.cpp b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
+--- a/Source/Core/DolphinNoGUI/PlatformWin32.cpp
++++ b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
+@@ -2,6 +2,7 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ #include "DolphinNoGUI/Platform.h"
++#include "pause_menu_host.hpp"
+ 
+ #include "Core/Config/MainSettings.h"
+ #include "Core/Config/ConfigManager.h"
+@@ -21,6 +22,7 @@
+ #include <string>
+ #include <vector>
+ #include <windows.h>
++#include <windowsx.h>
+ #include <climits>
+ #include <dwmapi.h>
+ #include <thread>
+@@ -91,6 +93,7 @@
+   bool Init() override;
+   void SetTitle(const std::string& string) override;
+   void MainLoop() override;
++  void ToggleFullscreenFromMenu() override { ToggleFullscreen(); }
+ 
+   WindowSystemInfo GetWindowSystemInfo() const override;
+ 
+@@ -122,6 +125,7 @@
+   WINDOWPLACEMENT m_windowed_placement{sizeof(WINDOWPLACEMENT)};
+   LONG_PTR m_windowed_style = WS_OVERLAPPEDWINDOW;
+   LONG_PTR m_windowed_ex_style = WS_EX_CLIENTEDGE;
++  u32 m_mouse_buttons = 0;
+ 
+   int m_window_x = Config::Get(Config::MAIN_RENDER_WINDOW_XPOS);
+   int m_window_y = Config::Get(Config::MAIN_RENDER_WINDOW_YPOS);
+@@ -440,6 +444,7 @@
+   {
+     UpdateRunningFlag();
+     Core::HostDispatchJobs(Core::System::GetInstance());
++    Host_PauseMenuTick();
+     ProcessEvents();
+     UpdateWindowPosition();
+ 
+@@ -515,6 +520,9 @@
+   break;
+ 
+   case WM_KEYDOWN:
++    Host_PauseMenuKey(static_cast<int>(wParam), true);
++    if (wParam == VK_ESCAPE || Host_IsPauseMenuOpen())
++      return 0;
+     // Bit 30 is the previous key state. Ignore auto-repeat so holding F1 cannot
+     // queue a new savestate every few milliseconds.
+     if (wParam == VK_F1 && (static_cast<ULONG_PTR>(lParam) & (1u << 30)) == 0)
+@@ -532,18 +540,12 @@
+       platform->ToggleFullscreen();
+       return 0;
+     }
+-    else if (wParam == VK_ESCAPE && platform->m_window_fullscreen)
+-    {
+-      platform->SetFullscreen(false);
+-      return 0;
+-    }
+-    else if (wParam == VK_ESCAPE)
+-    {
+-      platform->RequestShutdown();
+-    }
+     break;
+ 
+   case WM_KEYUP:
++    Host_PauseMenuKey(static_cast<int>(wParam), false);
++    if (wParam == VK_ESCAPE || Host_IsPauseMenuOpen())
++      return 0;
+     if (wParam == VK_SPACE)
+     {
+       Host_SetFastForwardActive(false);
+@@ -552,10 +554,35 @@
+     break;
+ 
+   case WM_KILLFOCUS:
++    Host_PauseMenuFocusLost();
++    platform->m_mouse_buttons = 0;
++    if (g_presenter)
++      g_presenter->SetMousePress(0);
+     // Never leave emulation sped up if Space is released while another window has focus.
+     Host_SetFastForwardActive(false);
+     break;
+ 
++  case WM_MOUSEMOVE:
++    if (Host_IsPauseMenuOpen() && g_presenter)
++      g_presenter->SetMousePos(static_cast<float>(GET_X_LPARAM(lParam)),
++                               static_cast<float>(GET_Y_LPARAM(lParam)));
++    break;
++  case WM_LBUTTONDOWN:
++  case WM_LBUTTONUP:
++  case WM_RBUTTONDOWN:
++  case WM_RBUTTONUP:
++    if (platform && g_presenter &&
++        (Host_IsPauseMenuOpen() || msg == WM_LBUTTONUP || msg == WM_RBUTTONUP))
++    {
++      const u32 bit = (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP) ? 1u : 2u;
++      if (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN)
++        platform->m_mouse_buttons |= bit;
++      else
++        platform->m_mouse_buttons &= ~bit;
++      g_presenter->SetMousePress(platform->m_mouse_buttons);
++      return 0;
++    }
++    break;
+   case WM_SYSKEYDOWN:
+     if (wParam == VK_RETURN && (GetKeyState(VK_MENU) & 0x8000) != 0)
+     {
