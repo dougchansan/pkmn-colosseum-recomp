@@ -13,6 +13,7 @@
  * long "Waiting..." stays up; nothing runs in lockstep. When the connection
  * drops, the waiting side listens again and the joining side reconnects. */
 #include "online_battle_net.h"
+#include "online_battle_upnp.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -76,6 +77,8 @@ static int s_listen;          /* this side waits for the connection */
 static int s_state = NET_STATE_OFF;
 static unsigned s_port;
 static char s_target[256];
+static int s_upnp = -1;           /* UPNP_* result, -1 not tried */
+static char s_public_ip[64];
 
 /* Inbox, under s_lock; cleared for each new connection. */
 static uint8_t s_remote_hero[NET_HERO_SIZE];
@@ -285,6 +288,23 @@ static socket_t open_join(const char *target) {
     return BAD_SOCKET;
   *colon = 0;
   const char *port = colon + 1;
+  /* A dotted IPv4 address is used as it is. Looked up, an IPv6-only network
+     (a phone hotspot, with NAT64) turns it into a synthesized IPv6 address
+     that only reaches public IPv4 hosts: a LAN or Tailscale address then
+     times out. */
+  struct sockaddr_in v4;
+  memset(&v4, 0, sizeof(v4));
+  if (inet_pton(AF_INET, host, &v4.sin_addr) == 1) {
+    v4.sin_family = AF_INET;
+    v4.sin_port = htons((unsigned short)atoi(port));
+    socket_t s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == BAD_SOCKET)
+      return BAD_SOCKET;
+    if (connect(s, (struct sockaddr *)&v4, sizeof(v4)) == 0)
+      return s;
+    close_socket(s);
+    return BAD_SOCKET;
+  }
   struct addrinfo hints, *found = NULL;
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_UNSPEC;
@@ -359,6 +379,17 @@ static void *net_thread(void *unused)
   for (;;) {
     socket_t s = BAD_SOCKET;
     if (s_listen) {
+      const char *upnp = getenv("COLO_ONLINE_UPNP");
+      if (!upnp || strcmp(upnp, "0") != 0) {
+        set_state(NET_STATE_OPENING_PORT);
+        char ip[64];
+        const int result = upnp_map_tcp(s_port, ip, sizeof(ip));
+        mutex_lock(&s_lock);
+        s_upnp = result;
+        if (result == UPNP_MAPPED)
+          snprintf(s_public_ip, sizeof(s_public_ip), "%s", ip);
+        mutex_unlock(&s_lock);
+      }
       set_state(NET_STATE_LISTENING);
       s = open_host(s_port);
       if (s == BAD_SOCKET) {
@@ -426,6 +457,17 @@ int net_state(void) {
 int net_connected(void) { return net_state() == NET_STATE_CONNECTED; }
 
 const char *net_target(void) { return s_listen ? NULL : s_target; }
+
+int net_upnp(char *public_ip, size_t size) {
+  mutex_lock(&s_lock);
+  const int result = s_upnp;
+  if (public_ip && size)
+    snprintf(public_ip, size, "%s", s_public_ip);
+  mutex_unlock(&s_lock);
+  return result;
+}
+
+void net_stop(void) { upnp_unmap(); }
 unsigned net_port(void) { return s_port; }
 
 void net_send_hero(const uint8_t *hero) { send_message(kMsgHero, hero, NET_HERO_SIZE); }

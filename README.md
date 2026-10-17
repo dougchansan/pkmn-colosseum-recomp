@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-blue)](#platform-status)
-[![Release](https://img.shields.io/badge/release-v1.3.0-success)](#versioning)
+[![Release](https://img.shields.io/badge/release-v1.3.1-success)](#versioning)
 [![Backends](https://img.shields.io/badge/backends-C%20%7C%20LLVM-8A2BE2)](#source-and-mods)
 [![Recompiler](https://img.shields.io/badge/recompiler-DolRecomp-informational)](https://github.com/ExpansionPak/DolRecomp)
 [![Runtime](https://img.shields.io/badge/runtime-ModernGekko-informational)](https://github.com/ExpansionPak/ModernGekko)
@@ -45,14 +45,14 @@ must provide the path to your own legally obtained USA (`GC6E01`) ISO.
 Windows PowerShell:
 
 ```powershell
-Set-Location "C:\path\to\pkmn-colosseum-recomp-1.3.0"
+Set-Location "C:\path\to\pkmn-colosseum-recomp-1.3.1"
 .\setup.ps1 -Iso "D:\path\to\Pokemon Colosseum.iso"
 ```
 
 Linux or macOS:
 
 ```sh
-cd /path/to/pkmn-colosseum-recomp-1.3.0
+cd /path/to/pkmn-colosseum-recomp-1.3.1
 sh ./setup.sh "/path/to/Pokemon Colosseum.iso"
 ```
 
@@ -259,7 +259,7 @@ directory and is not part of the source release.
 
 ## Versioning
 
-The current release is **1.3.0**. Releases follow
+The current release is **1.3.1**. Releases follow
 [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
 
 - `MAJOR` changes can break an existing user's setup or integrations. For
@@ -269,13 +269,13 @@ The current release is **1.3.0**. Releases follow
 - `MINOR` changes add a feature while remaining backward compatible. That
   means a 1.x setup that worked before should keep working without conversion
   or changed commands. Adding an optional photo mode or a new graphics toggle
-  could therefore be `1.3.0`.
+  could therefore be `1.3.1`.
 - `PATCH` changes fix behavior without changing the supported interface. Here,
   compatible means existing commands, configuration, saves, and mods keep the
   same meaning. Fixing a stretched menu or a crash while loading the same save
   could therefore be `1.1.1`.
 
-Git release tags use the conventional `v` prefix, such as `v1.3.0`.
+Git release tags use the conventional `v` prefix, such as `v1.3.1`.
 
 ## Platform status
 

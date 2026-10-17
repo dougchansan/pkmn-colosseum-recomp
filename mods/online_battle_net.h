@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define NET_HERO_SIZE 0xB18u
@@ -9,6 +10,7 @@ enum { NET_OFF = 0, NET_HOST = 1, NET_GUEST = 2 };
 
 enum {
   NET_STATE_OFF,
+  NET_STATE_OPENING_PORT,  /* asking the router to forward the port (UPnP) */
   NET_STATE_LISTENING,     /* waiting for the other player to connect */
   NET_STATE_LISTEN_FAILED, /* the port is in use or not allowed */
   NET_STATE_CONNECTING,    /* trying to reach the other player */
@@ -31,6 +33,11 @@ int net_state(void);
 int net_connected(void);
 const char *net_target(void); /* host:port when joining, else NULL */
 unsigned net_port(void);       /* the port when waiting */
+/* UPnP on the waiting side: -1 not tried (or off), else UPNP_MAPPED (and the
+   router's public address), UPNP_NO_ROUTER or UPNP_REFUSED. */
+int net_upnp(char *public_ip, size_t size);
+/* Closes what net_start opened on the router. */
+void net_stop(void);
 
 void net_send_hero(const uint8_t *hero);
 int net_remote_hero(uint8_t *out); /* 1 once the other trainer arrived */

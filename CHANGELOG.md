@@ -3,6 +3,29 @@
 All notable release changes are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.1] - 2026-10-17
+
+Online battle fixes from the first internet test (a PC on home internet and a
+Mac on a phone hotspot: five turns in step, about 140 ms apart).
+
+### Fixed
+- The launcher's ONLINE BATTLE Host / Join started the game without the
+  online battle mod in the 1.3.0 packages; it now loads.
+- Joining a typed IPv4 address (a LAN or Tailscale address) from an
+  IPv6-only network such as a phone hotspot timed out: the address was turned
+  into a carrier IPv6 one. It is now used as typed.
+
+### Added
+- UPnP: the host asks the router to forward its TCP port and shows the public
+  address to give the other player; when the router does not answer, the
+  status says to forward the port by hand. The mapping is removed on exit.
+
+### Known limitations
+- Routers with UPnP turned off still need TCP 27100 forwarded by hand (or a
+  VPN such as Tailscale between the players).
+- macOS may still block joining a machine on the same local network until the
+  app that started the game (Terminal) is allowed under Local Network.
+
 ## [1.3.0] - 2026-10-17
 
 Feature release: play with other people. Game Boy Advance link play with an

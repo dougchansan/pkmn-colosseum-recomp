@@ -78,7 +78,7 @@ add_colosseum_patch_mod(
     pokemon-colosseum-online-battle
     "Pokemon Colosseum Online Battle"
     online_battle_mod.c)
-target_sources(colosseum_online_battle_mod PRIVATE online_battle_net.c)
+target_sources(colosseum_online_battle_mod PRIVATE online_battle_net.c online_battle_upnp.c)
 if(WIN32)
     target_link_libraries(colosseum_online_battle_mod PRIVATE ws2_32)
 else()

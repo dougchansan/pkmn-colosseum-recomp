@@ -25,6 +25,7 @@
  * (fn_800849B4), src/game/menu/menu_middle.c (fn_8006A824). */
 #include "moderngekko/mod_abi.h"
 #include "online_battle_net.h"
+#include "online_battle_upnp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -529,10 +530,31 @@ static void update_status(void) {
   if (state != NET_STATE_CONNECTED)
     s_problem[0] = 0; /* a new connection starts over */
   switch (state) {
-  case NET_STATE_LISTENING:
-    snprintf(text, sizeof(text), "Online battle: waiting for the other player to connect (TCP port %u)",
-             net_port());
+  case NET_STATE_OPENING_PORT:
+    snprintf(text, sizeof(text), "Online battle: opening TCP port %u on the router...", net_port());
     break;
+  case NET_STATE_LISTENING: {
+    char ip[64];
+    const int upnp = net_upnp(ip, sizeof(ip));
+    if (upnp == UPNP_MAPPED && ip[0] && upnp_address_is_private(ip))
+      snprintf(text, sizeof(text),
+               "Online battle: waiting on port %u. Port opened, but your router is behind another "
+               "one (%s): players outside your network may not reach you",
+               net_port(), ip);
+    else if (upnp == UPNP_MAPPED)
+      snprintf(text, sizeof(text),
+               "Online battle: waiting for the other player. Give them %s%s%u",
+               ip[0] ? ip : "your public address", ip[0] ? ":" : ", port ", net_port());
+    else if (upnp == UPNP_NO_ROUTER || upnp == UPNP_REFUSED)
+      snprintf(text, sizeof(text),
+               "Online battle: waiting on TCP port %u. The router did not open it: forward it by "
+               "hand for players outside your network",
+               net_port());
+    else
+      snprintf(text, sizeof(text), "Online battle: waiting for the other player to connect (TCP port %u)",
+               net_port());
+    break;
+  }
   case NET_STATE_LISTEN_FAILED:
     snprintf(text, sizeof(text), "Online battle: cannot use TCP port %u. Is it in use?", net_port());
     break;
@@ -593,10 +615,35 @@ static void replacement_timeout(CPUState *s) {
     port1[0] |= 0x01; /* A (0x0100) */
 }
 
+/* Test helper: <COLO_ONLINE_DIR>/warp.txt holding "floor [entry]" (hex or
+   decimal) sends the player there with the game's own door change
+   (floorLink, 0x80113828), e.g. 0x390 for the Phenac Pokemon Center
+   basement, where the trade terminal is. The file is removed once used. */
+static void warp_from_file(CPUState *s) {
+  FILE *f = open_file("warp.txt", "rb");
+  if (!f)
+    return;
+  char line[64] = {0};
+  fread(line, 1, sizeof(line) - 1, f);
+  fclose(f);
+  char path[1024];
+  snprintf(path, sizeof(path), "%s/warp.txt", data_dir());
+  remove(path);
+  char *end = NULL;
+  const uint32_t floor = (uint32_t)strtoul(line, &end, 0);
+  const uint32_t entry = end ? (uint32_t)strtoul(end, NULL, 0) : 0;
+  int ok = 0;
+  if (floor)
+    call(s, 0x80113828u, floor, entry, &ok);
+  fprintf(stderr, "[online-battle] warp to floor %#x entry %u%s\n", floor, entry, ok ? "" : " failed");
+}
+
 static void pad_poll_return(CPUState *s) {
   static unsigned polls;
   static int shown = -1;
   ++s_polls;
+  if (!online() && data_dir() && polls % 30 == 0)
+    warp_from_file(s);
   if (online())
     replacement_timeout(s);
   if (online() && s_virtual_p2)
@@ -1121,6 +1168,11 @@ static void new_battle(void) {
     net_new_battle();
 }
 
+static void on_unload(void) {
+  if (online())
+    net_stop(); /* close the port the router opened for us */
+}
+
 static void on_load(const ModernGekkoModHostApi *host) {
   api = host;
   net_start();
@@ -1177,7 +1229,7 @@ static const ModernGekkoModDesc descriptor = {
     NULL, 0,
     NULL, 0,
     on_load,
-    NULL,
+    on_unload,
 };
 
 MODERNGEKKO_MOD_EXPORT const ModernGekkoModDesc *moderngekko_get_mod(void) {

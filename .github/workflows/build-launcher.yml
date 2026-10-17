@@ -148,7 +148,8 @@ jobs:
             -DMODERNGEKKO_GAMECUBE_CONTROLLERS=ON \
             '-DMODERNGEKKO_NATIVE_ULTRAWIDE_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-ultrawide.mgm' \
             '-DMODERNGEKKO_TEXT_UPSCALE_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-hd-text.mgm' \
-            '-DMODERNGEKKO_MINIMAP_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-minimap.mgm'
+            '-DMODERNGEKKO_MINIMAP_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-minimap.mgm' \
+            '-DMODERNGEKKO_ONLINE_BATTLE_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-online-battle.mgm'
 
       - name: Build launcher, runner and port tool
         run: >
