@@ -3,6 +3,41 @@
 All notable release changes are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.3] - 2026-10-18
+
+Release packages are now playable on their own: the launcher builds the game
+module from your disc. (1.3.2 was prepared but not published; its changes are
+included here.)
+
+### Added
+- The launcher builds the native game module from the player's own disc. After
+  extracting the disc it downloads a compiler once (Zig 0.14.1, checked against
+  its published SHA-256) and builds the module with a progress bar, about 5 to
+  15 minutes; nothing needs installing. A game extracted by an earlier release
+  shows a **Build game** step on the Play page instead of failing to start
+  ("game process exited with code 2"). Packages carry the build tools and
+  runtime sources under `Tools/`, and still no game code.
+- `moderngekko-port --zig` builds a module without CMake, Ninja, Python or a
+  system compiler.
+- macOS: `PokemonColosseumRecomp.app` next to the launcher. Opening it lets
+  macOS ask once for Local Network access (online battles, netplay and GBA
+  link play) and list the game under Privacy & Security > Local Network; a
+  bare executable could not be granted it.
+
+### Fixed
+- macOS: a first run chose the Vulkan video backend, which macOS packages do not
+  carry, and the game closed at start ("Failed to initialize video backend").
+  Metal is now the default on macOS.
+- The launcher showed a blocky monospace font until a game was set up (the
+  game's own fonts are read from the player's disc). It now uses Roboto
+  Medium until then, and switches to the game's fonts once a game is set up,
+  without a restart.
+- Enlarged text (the HD text option in game, and the game's font in the
+  launcher and Esc menu) kept the original font's pixel steps on diagonals
+  and curves. Glyph edges are now rebuilt from a smooth field, so letters
+  such as A, M, y and C come out clean, and small letters keep their open
+  counters.
+
 ## [1.3.1] - 2026-10-17
 
 Online battle fixes from the first internet test (a PC on home internet and a

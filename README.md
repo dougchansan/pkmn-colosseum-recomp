@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-blue)](#platform-status)
-[![Release](https://img.shields.io/badge/release-v1.3.1-success)](#versioning)
+[![Release](https://img.shields.io/badge/release-v1.3.3-success)](#versioning)
 [![Backends](https://img.shields.io/badge/backends-C%20%7C%20LLVM-8A2BE2)](#source-and-mods)
 [![Recompiler](https://img.shields.io/badge/recompiler-DolRecomp-informational)](https://github.com/ExpansionPak/DolRecomp)
 [![Runtime](https://img.shields.io/badge/runtime-ModernGekko-informational)](https://github.com/ExpansionPak/ModernGekko)
@@ -35,7 +35,28 @@ Setup verifies the supported USA ISO (SHA-256
 and its original `main.dol` before applying game patches. A stale or modified
 extraction is rejected with an explanation.
 
-### GitHub Release ZIP or tar.gz
+### Release packages (easiest)
+
+Download the package for your system from the GitHub Release
+(`PokemonColosseumRecomp-v…-win64.zip`, `-linux-x86_64.zip` or `-macos-arm64.zip`),
+unzip it, and open `PokemonColosseumRecomp` (`.exe` on Windows, the `.app` on
+macOS). Choose your own USA (`GC6E01`) disc image (ISO, RVZ or WBFS) and press
+**Extract and play**. Nothing else needs installing:
+
+1. The launcher extracts the disc next to itself.
+2. It downloads a compiler once — [Zig](https://ziglang.org) 0.14.1, 45 to 80 MB
+   depending on the platform, checked against its published SHA-256 — into
+   `User/Toolchains`.
+3. It builds the game module from your extracted disc on your computer (about 5
+   to 15 minutes, with a progress bar), then starts the game.
+
+The packages contain no game code: the module is built from your disc each time
+it is set up, which is why the first start takes a while. Later starts are
+immediate. If the build stops (for example, no internet for the compiler
+download), **Build game** on the Play page retries it; the details are in
+`User/Logs/module-build.log`.
+
+### GitHub Release ZIP or tar.gz (source)
 
 Download `Source code (zip)` or `Source code (tar.gz)` from the GitHub Release,
 extract it, and open a terminal in the extracted folder. These archives contain
@@ -45,14 +66,14 @@ must provide the path to your own legally obtained USA (`GC6E01`) ISO.
 Windows PowerShell:
 
 ```powershell
-Set-Location "C:\path\to\pkmn-colosseum-recomp-1.3.1"
+Set-Location "C:\path\to\pkmn-colosseum-recomp-1.3.3"
 .\setup.ps1 -Iso "D:\path\to\Pokemon Colosseum.iso"
 ```
 
 Linux or macOS:
 
 ```sh
-cd /path/to/pkmn-colosseum-recomp-1.3.1
+cd /path/to/pkmn-colosseum-recomp-1.3.3
 sh ./setup.sh "/path/to/Pokemon Colosseum.iso"
 ```
 
@@ -71,7 +92,11 @@ git clone https://github.com/dougchansan/pkmn-colosseum-recomp.git && cd pkmn-co
 ```
 
 Launch `build/release/PokemonColosseumRecomp/PokemonColosseumRecomp` (`.exe`
-on Windows). Setup validates `GC6E01`, extracts the disc, builds the stable C
+on Windows). On macOS, the release packages also carry
+`PokemonColosseumRecomp.app`: open that instead, so macOS can ask once for
+Local Network access (online battles, netplay and GBA link play need it). A
+downloaded app is blocked by Gatekeeper the first time: Control-click it and
+choose Open. Setup validates `GC6E01`, extracts the disc, builds the stable C
 module, and creates a portable player directory.
 
 Normal boot is the default even when savestates exist. In-game saves use the
@@ -259,7 +284,7 @@ directory and is not part of the source release.
 
 ## Versioning
 
-The current release is **1.3.1**. Releases follow
+The current release is **1.3.3**. Releases follow
 [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
 
 - `MAJOR` changes can break an existing user's setup or integrations. For
@@ -269,13 +294,13 @@ The current release is **1.3.1**. Releases follow
 - `MINOR` changes add a feature while remaining backward compatible. That
   means a 1.x setup that worked before should keep working without conversion
   or changed commands. Adding an optional photo mode or a new graphics toggle
-  could therefore be `1.3.1`.
+  could therefore be `1.4.0`.
 - `PATCH` changes fix behavior without changing the supported interface. Here,
   compatible means existing commands, configuration, saves, and mods keep the
   same meaning. Fixing a stretched menu or a crash while loading the same save
   could therefore be `1.1.1`.
 
-Git release tags use the conventional `v` prefix, such as `v1.3.1`.
+Git release tags use the conventional `v` prefix, such as `v1.3.3`.
 
 ## Platform status
 

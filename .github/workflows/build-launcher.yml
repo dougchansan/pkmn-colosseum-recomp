@@ -12,10 +12,15 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: 'Runners to build on. macOS bills at 10x and Windows at 2x private-repo minutes, so debug on linux first.'
+        description: 'Platforms to build. On GitHub-hosted runners macOS bills at 10x and Windows at 2x private-repo minutes, so debug on linux first.'
         type: choice
         default: linux
         options: [linux, all, windows, macos]
+      runners:
+        description: 'self-hosted uses the project machines (no billed minutes); github uses GitHub-hosted runners.'
+        type: choice
+        default: self-hosted
+        options: [self-hosted, github]
       source_ref:
         description: 'Optional source tag or commit to package; defaults to this workflow ref.'
         type: string
@@ -30,20 +35,35 @@ permissions:
 
 jobs:
   # Selecting the matrix here keeps a debug cycle to one cheap Linux runner.
-  # A full three-platform run costs ~585 billed minutes on a private repo.
+  # On GitHub-hosted runners a full three-platform run costs ~585 billed
+  # minutes on a private repo; the self-hosted project machines cost none.
+  #
+  # Self-hosted runners execute whatever the triggering code says, so they
+  # are used only while the repository is private and never for a pull
+  # request from a fork. Making the repository public falls back to
+  # GitHub-hosted runners (free for public repositories) without an edit.
   plan:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && (inputs.runners || 'self-hosted') == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","pkmn-recomp"]') || 'ubuntu-latest' }}
     outputs:
       matrix: ${{ steps.pick.outputs.matrix }}
     steps:
       - id: pick
         shell: bash
+        env:
+          SELF_HOSTED: ${{ github.event.repository.private && (inputs.runners || 'self-hosted') == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         run: |
           # dispatch -> caller's choice; PR -> linux only (cheap); tag -> all three.
           sel="${{ github.event_name == 'workflow_dispatch' && inputs.platforms || github.event_name == 'pull_request' && 'linux' || 'all' }}"
-          linux='{"os":"ubuntu-latest","label":"linux-x86_64","modlib":"mod.so","exe":""}'
-          win='{"os":"windows-latest","label":"win64","modlib":"mod.dll","exe":".exe"}'
-          mac='{"os":"macos-latest","label":"macos-arm64","modlib":"mod.dylib","exe":""}'
+          if [ "$SELF_HOSTED" = true ]; then
+            linux='{"os":["self-hosted","Linux","pkmn-recomp"],"label":"linux-x86_64","modlib":"mod.so","exe":"","jobs":16}'
+            win='{"os":["self-hosted","Windows","pkmn-recomp"],"label":"win64","modlib":"mod.dll","exe":".exe","jobs":8}'
+            mac='{"os":["self-hosted","macOS","pkmn-recomp"],"label":"macos-arm64","modlib":"mod.dylib","exe":"","jobs":8}'
+          else
+            linux='{"os":"ubuntu-latest","label":"linux-x86_64","modlib":"mod.so","exe":"","jobs":4}'
+            win='{"os":"windows-latest","label":"win64","modlib":"mod.dll","exe":".exe","jobs":4}'
+            mac='{"os":"macos-latest","label":"macos-arm64","modlib":"mod.dylib","exe":"","jobs":4}'
+          fi
+          echo "runners: $([ "$SELF_HOSTED" = true ] && echo self-hosted || echo github)"
           case "$sel" in
             linux)   inc="[$linux]" ;;
             windows) inc="[$win]" ;;
@@ -64,7 +84,7 @@ jobs:
     steps:
       - name: Enable Windows long paths
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: git config --global core.longpaths true
 
       - name: Checkout with submodules
@@ -88,11 +108,15 @@ jobs:
 
       - name: Install macOS build dependencies
         if: runner.os == 'macOS'
-        run: brew install ninja
+        run: command -v ninja >/dev/null || brew install ninja
 
       - name: Install Windows build dependencies
         if: runner.os == 'Windows'
-        run: choco install ninja --no-progress -y
+        shell: powershell
+        run: |
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            choco install ninja --no-progress -y
+          }
 
       - name: Set up MSVC environment
         if: runner.os == 'Windows'
@@ -115,26 +139,36 @@ jobs:
       # binary. On a runner that is only /home/runner/work/..., but keeping
       # the trim here means a local build of this same workflow does not leak
       # a developer's username either.
+      #
+      # The flag is exported as CFLAGS/CXXFLAGS/OBJCFLAGS/OBJCXXFLAGS rather
+      # than pasted into -DCMAKE_<LANG>_FLAGS="${{ ... }}": the Windows flag
+      # ends in a backslash, which escaped that closing quote and left CMake
+      # with mangled C flags and no C++ trim at all. CMake also prepends these
+      # variables to its platform defaults (/DWIN32 /D_WINDOWS /EHsc on MSVC)
+      # where -DCMAKE_<LANG>_FLAGS would replace them.
       - name: Compute path-trimming flags
-        id: trim
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            echo "cflags=/d1trimfile:$(cygpath -w "$GITHUB_WORKSPACE")\\" >> "$GITHUB_OUTPUT"
+            flag="/d1trimfile:$(cygpath -w "$GITHUB_WORKSPACE")\\"
           else
-            echo "cflags=-ffile-prefix-map=$GITHUB_WORKSPACE=." >> "$GITHUB_OUTPUT"
+            flag="-ffile-prefix-map=$GITHUB_WORKSPACE=."
           fi
+          echo "trim flag: $flag"
+          for var in CFLAGS CXXFLAGS OBJCFLAGS OBJCXXFLAGS; do
+            echo "$var=$flag" >> "$GITHUB_ENV"
+          done
 
+      # -U drops cached flags so a self-hosted runner's persistent build tree
+      # re-reads them from the environment on every run.
       - name: Configure ModernGekko
         shell: bash
         run: |
           cmake -S lib/ModernGekko -B lib/ModernGekko/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=ON \
-            -DCMAKE_C_FLAGS="${{ steps.trim.outputs.cflags }}" \
-            -DCMAKE_CXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
-            -DCMAKE_OBJC_FLAGS="${{ steps.trim.outputs.cflags }}" \
-            -DCMAKE_OBJCXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            -UCMAKE_C_FLAGS -UCMAKE_CXX_FLAGS \
+            -UCMAKE_OBJC_FLAGS -UCMAKE_OBJCXX_FLAGS \
             '-DMODERNGEKKO_FRONTEND_NAME=Pokemon Colosseum Recomp' \
             -DMODERNGEKKO_LAUNCHER_OUTPUT_NAME=PokemonColosseumRecomp \
             -DMODERNGEKKO_RUNNER_OUTPUT_NAME=moderngekko-run \
@@ -146,6 +180,7 @@ jobs:
             -DMODERNGEKKO_PORTABLE_DEFAULT_GAME=ON \
             -DMODERNGEKKO_PORTABLE_USER_DIRECTORY=ON \
             -DMODERNGEKKO_GAMECUBE_CONTROLLERS=ON \
+            -DMODERNGEKKO_PORT_RELOCATABLE=ON \
             '-DMODERNGEKKO_NATIVE_ULTRAWIDE_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-ultrawide.mgm' \
             '-DMODERNGEKKO_TEXT_UPSCALE_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-hd-text.mgm' \
             '-DMODERNGEKKO_MINIMAP_MOD_PACKAGE=Mods/Optional/pokemon-colosseum-minimap.mgm' \
@@ -153,13 +188,13 @@ jobs:
 
       - name: Build launcher, runner and port tool
         run: >
-          cmake --build lib/ModernGekko/build --parallel 4
+          cmake --build lib/ModernGekko/build --parallel ${{ matrix.jobs }}
           --target moderngekko-launcher moderngekko-run moderngekko-port
 
       - name: Build and run ModernGekko tests
         shell: bash
         run: |
-          cmake --build lib/ModernGekko/build --parallel 4
+          cmake --build lib/ModernGekko/build --parallel ${{ matrix.jobs }}
           ctest --test-dir lib/ModernGekko/build -N -R '^moderngekko\.' | grep -Eq 'Total Tests: [1-9][0-9]*'
           ctest --test-dir lib/ModernGekko/build --output-on-failure -R '^moderngekko\.'
 
@@ -168,12 +203,10 @@ jobs:
         run: |
           cmake -S mods -B build/mods -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="${{ steps.trim.outputs.cflags }}" \
-            -DCMAKE_CXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
-            -DCMAKE_OBJC_FLAGS="${{ steps.trim.outputs.cflags }}" \
-            -DCMAKE_OBJCXX_FLAGS="${{ steps.trim.outputs.cflags }}" \
+            -UCMAKE_C_FLAGS -UCMAKE_CXX_FLAGS \
+            -UCMAKE_OBJC_FLAGS -UCMAKE_OBJCXX_FLAGS \
             "-DMODERNGEKKO_SOURCE_DIR=$GITHUB_WORKSPACE/lib/ModernGekko"
-          cmake --build build/mods --parallel 4
+          cmake --build build/mods --parallel ${{ matrix.jobs }}
 
       - name: Assemble package
         shell: bash
@@ -197,6 +230,7 @@ jobs:
           cp lib/DolRecomp/LICENSE "$DEST/licenses/DolRecomp/"
           cp lib/ModernGekko/vendor/dolphin/COPYING "$DEST/licenses/Dolphin/"
           cp -R lib/ModernGekko/vendor/dolphin/LICENSES "$DEST/licenses/Dolphin/"
+          cp -R packaging/licenses/Roboto "$DEST/licenses/"
           if [ "$RUNNER_OS" = "Windows" ]; then
             python scripts/collect-third-party-notices.py \
               lib/ModernGekko/vendor/dolphin/Externals "$DEST/licenses/Dolphin/Externals"
@@ -214,6 +248,33 @@ jobs:
             cp "$pkg/${{ matrix.modlib }}" "$DEST/Mods/Optional/$name/"
             cp -R mods/host-patches "$DEST/Mods/Optional/$name/"
           done
+
+          # Tools: what the launcher needs to build the game module from the
+          # player's own disc (it downloads the compiler itself): the port tool
+          # and DolRecomp, the runtime sources compiled into every module, and
+          # this game's patch lists. No game data and no generated code.
+          TOOLS="$DEST/Tools"
+          MS="$TOOLS/ModuleSource/vendor/dolphin"
+          VD=lib/ModernGekko/vendor/dolphin
+          mkdir -p "$TOOLS" "$MS/GXRuntime/src" "$MS/Source/Core/Core/PowerPC" \
+                   "$MS/Data/Sys/GameSettings"
+          cp "$MG/moderngekko-port${{ matrix.exe }}" "$MG/dolrecomp${{ matrix.exe }}" "$TOOLS/"
+          cp -R "$VD/module-template" "$MS/module-template"
+          rm -rf "$MS/module-template/generated"
+          cp -R "$VD/GXRuntime/include" "$MS/GXRuntime/include"
+          cp -R "$VD/GXRuntime/src/core" "$MS/GXRuntime/src/core"
+          cp -R "$VD/Source/Core/Core/PowerPC/StaticRecomp" "$MS/Source/Core/Core/PowerPC/StaticRecomp"
+          cp "$VD/Data/Sys/GameSettings/GC6E01.ini" "$MS/Data/Sys/GameSettings/"
+          cp patches/GC6E01-native-widescreen.csv patches/GC6E01-native-substitutions.csv "$TOOLS/"
+          if [ "$RUNNER_OS" = "Windows" ]; then PY=python; else PY=python3; fi
+          "$PY" scripts/make-module-hook-list.py --functions patches/GC6E01-functions.csv \
+            --mods mods --output "$TOOLS/GC6E01-module-hooks.txt"
+
+          # macOS: PokemonColosseumRecomp.app next to the launcher it starts,
+          # so macOS can ask for Local Network access (packaging/macos).
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            sh packaging/macos/make-app.sh "$DEST" "$(tr -d '\r\n' < VERSION)"
+          fi
 
           # Empty runtime scaffolding; no savestates, memory cards or configs.
           mkdir -p "$DEST/User/Config" "$DEST/User/GameSettings" \
@@ -248,7 +309,22 @@ jobs:
             echo "::error::package contains unexpected user or mod image data"
             fail=1
           fi
-          if grep -rl 'runneradmin\|/Users/runner/work' "$DEST" 2>/dev/null | grep -q .; then
+          # A self-hosted runner builds under its owner's account, so also
+          # reject that account's home path. The workspace itself must not
+          # appear either: the path-trimming flags above remove it from
+          # __FILE__, so a hit here means the trim stopped applying.
+          owner="${USER:-${USERNAME:-}}"
+          ws="$GITHUB_WORKSPACE"
+          ws_fwd="$ws"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ws=$(cygpath -w "$GITHUB_WORKSPACE")
+            ws_fwd=$(cygpath -m "$GITHUB_WORKSPACE")
+          fi
+          if grep -rl 'runneradmin\|/Users/runner/work' "$DEST" 2>/dev/null | grep -q . ||
+             grep -rliF -e "$ws" -e "$ws_fwd" "$DEST" 2>/dev/null | grep -q . ||
+             { [ -n "$owner" ] && grep -rlF -e "/home/$owner/" -e "/Users/$owner/" \
+                 -e "Users\\$owner\\" "$DEST" 2>/dev/null | grep -q .; }; then
+            grep -rliF -e "$ws" -e "$ws_fwd" "$DEST" 2>/dev/null | head -20 || true
             echo "::error::package embeds absolute runner paths"
             fail=1
           fi
