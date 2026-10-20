@@ -240,13 +240,17 @@ jobs:
           fi
 
           # Optional mods, each carrying the canonical host-patch payload so a
-          # generated package can never ship stale renderer patches.
+          # generated package can never ship stale renderer patches. The
+          # follower Pokemon is on by default: it goes in Mods/, which always
+          # loads.
           mkdir -p "$DEST/Mods/Optional"
           for pkg in build/mods/packages/*.mgm; do
             name=$(basename "$pkg")
-            mkdir -p "$DEST/Mods/Optional/$name"
-            cp "$pkg/${{ matrix.modlib }}" "$DEST/Mods/Optional/$name/"
-            cp -R mods/host-patches "$DEST/Mods/Optional/$name/"
+            dir="$DEST/Mods/Optional/$name"
+            [ "$name" = pokemon-colosseum-follower.mgm ] && dir="$DEST/Mods/$name"
+            mkdir -p "$dir"
+            cp "$pkg/${{ matrix.modlib }}" "$dir/"
+            cp -R mods/host-patches "$dir/"
           done
 
           # Tools: what the launcher needs to build the game module from the

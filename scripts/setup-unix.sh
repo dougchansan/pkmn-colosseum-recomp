@@ -169,6 +169,9 @@ cp -R "$MG_BUILD/Sys" "$MG_BUILD/patches" "$PACKAGE/"
 cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$ROOT/VERSION" "$PACKAGE/"
 for source in "$MOD_BUILD"/packages/*.mgm; do
     target=$PACKAGE/Mods/Optional/$(basename -- "$source")
+    # The follower Pokemon is on by default: Mods/ always loads.
+    [ "$(basename -- "$source")" = pokemon-colosseum-follower.mgm ] &&
+        target=$PACKAGE/Mods/$(basename -- "$source")
     mkdir -p "$target"
     cp "$source/$MODLIB" "$target/"
     cp -R "$source/host-patches" "$target/"

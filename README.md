@@ -269,6 +269,11 @@ Mods/Optional/<id>.mgm/
   host-patches/
 ```
 
+The follower Pokémon (`pokemon-colosseum-follower`) is on by default, so it
+ships in `Mods/<id>.mgm/` instead, which always loads. Tap Z in the field to
+send your first Pokémon out of its ball or call it back; it walks behind Wes,
+and Rui behind it. It comes out only outdoors.
+
 Each package has a stable ID, semantic version, game/ABI checks, capability
 export, dependency ordering, and netplay fingerprint. See
 [`mods/README.md`](mods/README.md) for package IDs and patch details.

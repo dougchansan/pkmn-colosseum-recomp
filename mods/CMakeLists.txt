@@ -66,6 +66,12 @@ add_colosseum_patch_mod(
     pokemon-colosseum-freecam
     "Pokemon Colosseum C-Stick Free Camera"
     freecam_mod.c)
+# The first party Pokemon follows Wes in the field; Rui walks behind it.
+add_colosseum_patch_mod(
+    colosseum_follower_mod
+    pokemon-colosseum-follower
+    "Pokemon Colosseum Follower Pokemon"
+    follower_mod.c)
 # Capture-only: stages the attract-video remake (research/attract).
 add_colosseum_patch_mod(
     colosseum_attract_stage_mod

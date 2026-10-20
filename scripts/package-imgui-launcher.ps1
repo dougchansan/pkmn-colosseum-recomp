@@ -326,6 +326,10 @@ function Install-Package([string]$destination, [switch]$DeveloperInstall) {
             throw "Missing Windows mod library: $sourceLibrary"
         }
         $destinationPackage = Join-Path $optionalMods $sourcePackage.Name
+        if ($sourcePackage.Name -eq 'pokemon-colosseum-follower.mgm') {
+            # On by default: Mods\ always loads.
+            $destinationPackage = Join-Path $destination "Mods\$($sourcePackage.Name)"
+        }
         New-Item -ItemType Directory -Path $destinationPackage -Force | Out-Null
         Copy-Item -LiteralPath $sourceLibrary -Destination $destinationPackage -Force
         # Every optional mod needs the same host runtime support. Package the

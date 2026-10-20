@@ -3,6 +3,18 @@
 All notable release changes are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.4] - 2026-10-19
+
+### Added
+- Follower Pokémon, on by default. In the field, tap Z to throw your first
+  Pokémon's ball: Wes throws it, the ball flies out and opens up to three steps
+  ahead of him (closer when a wall is in the way), and the Pokémon comes out
+  with its cry. It then follows behind Wes with a little hop in its step, and
+  Rui walks behind it. Tap Z again to call it back. It only comes out outdoors,
+  and it stays out (or in its ball) across maps, menus and battles. The game
+  module the launcher builds from your disc picks up the change by itself:
+  updating rebuilds it once.
+
 ## [1.3.3] - 2026-10-18
 
 Release packages are now playable on their own: the launcher builds the game
