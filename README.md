@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-blue)](#platform-status)
-[![Release](https://img.shields.io/badge/release-v1.3.3-success)](#versioning)
+[![Release](https://img.shields.io/badge/release-v1.3.4-success)](#versioning)
 [![Backends](https://img.shields.io/badge/backends-C%20%7C%20LLVM-8A2BE2)](#source-and-mods)
 [![Recompiler](https://img.shields.io/badge/recompiler-DolRecomp-informational)](https://github.com/ExpansionPak/DolRecomp)
 [![Runtime](https://img.shields.io/badge/runtime-ModernGekko-informational)](https://github.com/ExpansionPak/ModernGekko)
@@ -20,6 +20,13 @@ The stable player uses the portable C backend at the original 30 FPS. Native
 Hor+ ultrawide, dynamic HD text, and a high-contrast minimap are independent
 ModernGekko mods. No Nintendo game data is included or downloaded; bring your
 own legally obtained USA disc dump.
+
+**What this is:** a static recompilation, not a source port. DolRecomp
+translates the game's original PowerPC code into C, which is compiled into a
+native module on your computer from your own disc. That module runs on the
+ModernGekko runtime, which provides the GameCube graphics, audio and hardware
+layer. The [decompilation project](https://github.com/dougchansan/pkmn-colosseum)
+is separate and is not used to build this player.
 
 ## Install
 
@@ -66,14 +73,14 @@ must provide the path to your own legally obtained USA (`GC6E01`) ISO.
 Windows PowerShell:
 
 ```powershell
-Set-Location "C:\path\to\pkmn-colosseum-recomp-1.3.3"
+Set-Location "C:\path\to\pkmn-colosseum-recomp-1.3.4"
 .\setup.ps1 -Iso "D:\path\to\Pokemon Colosseum.iso"
 ```
 
 Linux or macOS:
 
 ```sh
-cd /path/to/pkmn-colosseum-recomp-1.3.3
+cd /path/to/pkmn-colosseum-recomp-1.3.4
 sh ./setup.sh "/path/to/Pokemon Colosseum.iso"
 ```
 
@@ -305,7 +312,7 @@ The current release is **1.3.3**. Releases follow
   same meaning. Fixing a stretched menu or a crash while loading the same save
   could therefore be `1.1.1`.
 
-Git release tags use the conventional `v` prefix, such as `v1.3.3`.
+Git release tags use the conventional `v` prefix, such as `v1.3.4`.
 
 ## Platform status
 
