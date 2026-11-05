@@ -3,6 +3,45 @@
 All notable release changes are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] - 2026-11-04
+
+Polish release: menus that fit a widescreen display, sharper text, keyboard
+controls and a pause menu in the launcher's look. (1.3.5 was prepared but not
+published; its changes are included here.) Saves and setup stay compatible
+with 1.3.4; the launcher rebuilds the game module once.
+
+### Added
+- Pause menu in the launcher's look.
+- Keyboard as a gamepad, and a button mapping screen.
+- The launcher rebuilds the game module by itself when a release changes the
+  list of game functions its mods hook, and records how each module was built.
+- Netplay: a lobby when there is no window, an unattended host that waits for
+  the other machine, and mods matched by identity across platforms.
+- Experimental Dolphin-free mode: a launcher setting (DOLPHIN-FREE) that plays
+  the game on the bundled standalone host instead of Dolphin. The launcher
+  builds its game module from your disc the same way, once. It has no mods
+  (free camera, followers), online battle, netplay, GBA link or savestates yet,
+  boots from an ISO or GCM, and keeps its own memory card, which starts with
+  copies of your saves. Games extracted by an earlier release need extracting
+  again from the ISO before this mode can find the disc.
+
+### Changed
+- HD text draws the game's text in MS PGothic at 24px per line (was 26px),
+  so tall lines no longer clip in the message boxes.
+- Widescreen: the Start menu's Pokémon, Items and other pages keep the Hor+
+  world behind them instead of pillarboxing it. The PDA stays on its 4:3
+  canvas with its own dark-forest background filling the sides.
+
+### Fixed
+- The launcher no longer requires a gamepad: with none connected it plays on
+  the keyboard instead of asking for an SDL controller
+  ([#1](https://github.com/dougchansan/pkmn-colosseum-recomp/issues/1)).
+- Widescreen: the Start menu and the Pokémon list switched between 4:3 and
+  Hor+ depending on which menu was open before (the PDA left a stale overlay
+  state behind, and the Pokémon list was briefly mistaken for a battle).
+- The PC, its Box and Summary screens stay on their 4:3 canvas.
+- Free camera in netplay: each machine's camera follows its own player.
+
 ## [1.3.4] - 2026-10-19
 
 ### Added

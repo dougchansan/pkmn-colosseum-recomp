@@ -1,7 +1,7 @@
-name: Build launcher artifacts
+name: Build player artifacts
 
-# Builds the ModernGekko launcher, runner and optional mod packages for
-# Windows, Linux and macOS.
+# Every build produces both player packages: the themed launcher with the
+# ModernGekko runner and its mods, and the Dolphin-free standalone host.
 #
 # These artifacts contain NO game data and NO game-derived recomp module.
 # Producing a module requires the user's own legally obtained GC6E01 disc
@@ -34,6 +34,11 @@ permissions:
   contents: read
 
 jobs:
+  standalone:
+    uses: ./.github/workflows/build-standalone.yml
+    with:
+      platforms: ${{ github.event_name == 'workflow_dispatch' && inputs.platforms || github.event_name == 'pull_request' && 'linux' || 'all' }}
+      source_ref: ${{ inputs.source_ref || '' }}
   # Selecting the matrix here keeps a debug cycle to one cheap Linux runner.
   # On GitHub-hosted runners a full three-platform run costs ~585 billed
   # minutes on a private repo; the self-hosted project machines cost none.
@@ -345,4 +350,58 @@ jobs:
         with:
           name: PokemonColosseumRecomp-${{ matrix.label }}
           path: build/artifact/PokemonColosseumRecomp
+          if-no-files-found: error
+
+  # The launcher package carries the standalone host in Standalone/, behind its
+  # experimental Dolphin-free setting. Both builds are asset-free.
+  bundle:
+    needs: [standalone, build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - launcher: win64
+            standalone: windows-x86_64
+          - launcher: linux-x86_64
+            standalone: linux-x86_64
+          - launcher: macos-arm64
+            standalone: macos-arm64
+    steps:
+      - name: Download the launcher package
+        id: launcher
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: PokemonColosseumRecomp-${{ matrix.launcher }}
+          path: package/PokemonColosseumRecomp
+      - name: Download the standalone package
+        if: steps.launcher.outcome == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ColosseumStandalone-${{ matrix.standalone }}
+          path: standalone
+      - name: Place the standalone host in Standalone/
+        if: steps.launcher.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=$(ls standalone/ColosseumStandalone-*)
+          mkdir unpacked
+          case "$archive" in
+            *.zip) unzip -q "$archive" -d unpacked ;;
+            *) tar -xzf "$archive" -C unpacked ;;
+          esac
+          rm -rf package/PokemonColosseumRecomp/Standalone
+          mv unpacked/ColosseumStandalone package/PokemonColosseumRecomp/Standalone
+          cd package/PokemonColosseumRecomp
+          rm -f SHA256SUMS
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - name: Upload the bundled package
+        if: steps.launcher.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PokemonColosseumRecomp-${{ matrix.launcher }}
+          path: package/PokemonColosseumRecomp
+          overwrite: true
           if-no-files-found: error

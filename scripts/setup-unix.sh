@@ -30,6 +30,18 @@ GRAPHICS_BACKEND=Vulkan
 if [ "$(uname -s)" = Darwin ]; then
     GRAPHICS_BACKEND=Metal
 fi
+# FMA3 where this machine has it: the modules are built for, and only run on,
+# this machine, and without it the fused multiply-adds the Gekko's float math
+# is written with are libm calls (~3% of the emulation thread).
+ARCH_FLAGS=
+case "$(uname -m)" in
+x86_64 | amd64)
+    if grep -qw fma /proc/cpuinfo 2>/dev/null ||
+        sysctl -n machdep.cpu.features 2>/dev/null | grep -qw FMA; then
+        ARCH_FLAGS=-mfma
+    fi
+    ;;
+esac
 
 for command in git cmake ninja python3; do
     command -v "$command" >/dev/null 2>&1 || {
@@ -96,6 +108,7 @@ while IFS=, read -r guest symbol note; do
     symbol=$(printf '%s' "$symbol" | tr -d '')
     [ -n "$symbol" ] && set -- "$@" --native-subst "$guest:$symbol"
 done <"$SUBSTITUTIONS"
+[ -n "$ARCH_FLAGS" ] && set -- "$@" --arch-flags "$ARCH_FLAGS"
 "$MG_BUILD/moderngekko-port" "$@"
 
 set -- build "$GAME" --backend c --toolchain clang --opt-level 2 --output "$MODULES_60FPS"
@@ -114,6 +127,7 @@ while IFS=, read -r guest symbol note; do
     symbol=$(printf '%s' "$symbol" | tr -d '')
     [ -n "$symbol" ] && set -- "$@" --native-subst "$guest:$symbol"
 done <"$SUBSTITUTIONS"
+[ -n "$ARCH_FLAGS" ] && set -- "$@" --arch-flags "$ARCH_FLAGS"
 "$MG_BUILD/moderngekko-port" "$@"
 
 MODULE=$(sed -e 's/\r$//' "$MODULES/GC6E01/active-module-c.txt")
@@ -138,11 +152,11 @@ hook_aware_module() {
     python3 "$ROOT/scripts/make-hook-aware-module.py" \
         --src "$built_dir/dolrecomp-output/generated" --dst "$out/generated" \
         --functions "$ROOT/patches/GC6E01-functions.csv" --mods "$ROOT/mods" \
-        --idle-continuation 800FEB9C >&2
+        --idle-continuation 800FEB9C --idle-loop 800D31E0:800D321C >&2
     cmake -S "$MODERNGEKKO/vendor/dolphin/module-template" -B "$out/build" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DGAME_ID=GC6E01 \
         "-DGENERATED_DIR=$out/generated" -DRECOMPCORE_MODULE_OPT_LEVEL=2 \
-        -DRECOMPCORE_MODULE_ENABLE_IPO=ON >&2
+        -DRECOMPCORE_MODULE_ENABLE_IPO=ON "-DRECOMPCORE_MODULE_ARCH_FLAGS=$ARCH_FLAGS" >&2
     cmake --build "$out/build" --parallel "$JOBS" >&2
     [ -f "$out/build/$(basename -- "$1")" ] || {
         echo "hook-aware module not built: $out/build/$(basename -- "$1")" >&2

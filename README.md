@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-blue)](#platform-status)
-[![Release](https://img.shields.io/badge/release-v1.3.4-success)](#versioning)
+[![Release](https://img.shields.io/badge/release-v1.4.0-success)](#versioning)
 [![Backends](https://img.shields.io/badge/backends-C%20%7C%20LLVM-8A2BE2)](#source-and-mods)
 [![Recompiler](https://img.shields.io/badge/recompiler-DolRecomp-informational)](https://github.com/ExpansionPak/DolRecomp)
 [![Runtime](https://img.shields.io/badge/runtime-ModernGekko-informational)](https://github.com/ExpansionPak/ModernGekko)
@@ -73,14 +73,14 @@ must provide the path to your own legally obtained USA (`GC6E01`) ISO.
 Windows PowerShell:
 
 ```powershell
-Set-Location "C:\path\to\pkmn-colosseum-recomp-1.3.4"
+Set-Location "C:\path\to\pkmn-colosseum-recomp-1.4.0"
 .\setup.ps1 -Iso "D:\path\to\Pokemon Colosseum.iso"
 ```
 
 Linux or macOS:
 
 ```sh
-cd /path/to/pkmn-colosseum-recomp-1.3.4
+cd /path/to/pkmn-colosseum-recomp-1.4.0
 sh ./setup.sh "/path/to/Pokemon Colosseum.iso"
 ```
 
@@ -312,7 +312,7 @@ The current release is **1.3.3**. Releases follow
   same meaning. Fixing a stretched menu or a crash while loading the same save
   could therefore be `1.1.1`.
 
-Git release tags use the conventional `v` prefix, such as `v1.3.4`.
+Git release tags use the conventional `v` prefix, such as `v1.4.0`.
 
 ## Platform status
 

@@ -9,3 +9,6 @@ Makefile text eol=lf
 *.ps1 text eol=crlf
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# Preserve the upstream notice bytes verified by SOURCES.json on every host.
+/third_party/notices/dawn/* -text

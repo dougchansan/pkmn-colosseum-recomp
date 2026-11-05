@@ -1,0 +1,1303 @@
+{
+  "schema_version": 2,
+  "dawn": {
+    "release": "v20260618.032059",
+    "commit": "266c1cf8de969a364afa4fa49311631fc99a881e",
+    "workflow_url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/.github/workflows/release.yml",
+    "release_config_url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/.github/workflows/dawn-ci.cmake",
+    "assets": [
+      {
+        "asset_name": "dawn-darwin-arm64.tar.gz",
+        "asset_url": "https://github.com/encounter/dawn/releases/download/v20260618.032059/dawn-darwin-arm64.tar.gz",
+        "asset_sha256": "a9cc9903761e60cf70d7d771bd0c482be1943e273717782d71c33313afeb6080",
+        "link_inputs_and_runtime": [
+          {
+            "member": "./lib/libwebgpu_dawn.a",
+            "sha256": "6076aa3becacb8075ef8cef532bac5709706ac56e1703ff17c61fa4532e57e3f",
+            "size": 20419392,
+            "distribution": "statically-linked"
+          }
+        ]
+      },
+      {
+        "asset_name": "dawn-darwin-x86_64.tar.gz",
+        "asset_url": "https://github.com/encounter/dawn/releases/download/v20260618.032059/dawn-darwin-x86_64.tar.gz",
+        "asset_sha256": "d9cb3fd6f59d6fb69a356c0f832db9a6792a610e9de9ad2b0254f1533cf18e2e",
+        "link_inputs_and_runtime": [
+          {
+            "member": "./lib/libwebgpu_dawn.a",
+            "sha256": "8dd5a14980e1000bd82521e1880caede60212de7f2be95908a83afc80bf4b38e",
+            "size": 22597272,
+            "distribution": "statically-linked"
+          }
+        ]
+      },
+      {
+        "asset_name": "dawn-linux-aarch64.tar.gz",
+        "asset_url": "https://github.com/encounter/dawn/releases/download/v20260618.032059/dawn-linux-aarch64.tar.gz",
+        "asset_sha256": "4c02f50500831d1e4bf568f4aa7db34a8286842ee156443c9dcc3ac1a44fb1b0",
+        "link_inputs_and_runtime": [
+          {
+            "member": "./lib/libwebgpu_dawn.a",
+            "sha256": "a824bdc1ad5d37b418e30ccbf406f74d6dbcb8ef73b8b3c02830dbf3cea335e6",
+            "size": 41191652,
+            "distribution": "statically-linked"
+          }
+        ]
+      },
+      {
+        "asset_name": "dawn-linux-x86_64.tar.gz",
+        "asset_url": "https://github.com/encounter/dawn/releases/download/v20260618.032059/dawn-linux-x86_64.tar.gz",
+        "asset_sha256": "650a5479d8ecdfaad1a74079715010427fc30dab6c266fe46320948340897962",
+        "link_inputs_and_runtime": [
+          {
+            "member": "./lib/libwebgpu_dawn.a",
+            "sha256": "0183316b84642f96387b745c683fefd5ebf0deb731fc8186485c5d2a92f20094",
+            "size": 41605316,
+            "distribution": "statically-linked"
+          }
+        ]
+      },
+      {
+        "asset_name": "dawn-windows-amd64.tar.gz",
+        "asset_url": "https://github.com/encounter/dawn/releases/download/v20260618.032059/dawn-windows-amd64.tar.gz",
+        "asset_sha256": "d26d3107142c5a123d2102979c7403308668038372616fbd33a537e45c22f0dc",
+        "link_inputs_and_runtime": [
+          {
+            "member": "./bin/dxcompiler.dll",
+            "sha256": "4ab3d55530a44380a64cfc93679d53a8fc69a1f4da635119db1e1289e75274a4",
+            "size": 20173312,
+            "distribution": "runtime"
+          },
+          {
+            "member": "./bin/webgpu_dawn.dll",
+            "sha256": "9b09c3667f41d27c984440cb49dd102bef389c8ba72cfc287c202c9bd3fef0dc",
+            "size": 10471424,
+            "distribution": "runtime"
+          }
+        ]
+      }
+    ]
+  },
+  "audit": {
+    "complete": true,
+    "gaps": [],
+    "scope": "Project-level license/NOTICE coverage for the pinned release CMake monolithic Dawn/Tint libraries and their reachable non-system third-party link/header/code-generation dependencies on Windows x86_64, Linux x86_64/aarch64 and macOS x86_64/arm64; plus the separately distributed Windows DXC compiler and substituted official DXIL validator. This inventory covers those components, not legal clearance of the whole application.",
+    "method": [
+      "Read pinned top-level platform defaults, release cache overrides, bundling target graph, all 134 Dawn/Tint CMake build files and DEPS pins.",
+      "Followed all 81 tint_api transitive target dependencies conservatively across shipping backends; external edges resolve only src_utils (Dawn), Abseil and SPIR-V headers/tools.",
+      "Inspected native/common/system-utils/partition_alloc graph and imported Vulkan/EGL/RenderDoc/GL code-generation inputs; partition_alloc here is Dawn-authored shim, not external Chromium allocator.",
+      "Checked SPIR-V external dependency conditions and official DXC aggregate third-party notices.",
+      "Verified SHA256 of all five official Dawn platform archives against GitHub release digests and independently hashed their bundled library/runtime members; Linux/macOS static archive object inventories do not contain protobuf/glslang/re2/effcee/mimalloc/langsvr objects.",
+      "Original SDK DXIL provenance is superseded by a verified official release binary and its exact archive notices."
+    ],
+    "tint_api_reachable_target_count": 81,
+    "tint_api_external_dependencies": [
+      "abseil",
+      "spirv-headers",
+      "spirv-opt-internal",
+      "spirv-tools",
+      "src_utils"
+    ],
+    "dependency_pin_evidence": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/DEPS",
+    "binary_manifest_source": "https://api.github.com/repos/encounter/dawn/releases/tags/v20260618.032059",
+    "tint_api_transitive_targets": [
+      "tint_api",
+      "tint_api_common",
+      "tint_lang_core",
+      "tint_lang_core_constant",
+      "tint_lang_core_intrinsic",
+      "tint_lang_core_ir",
+      "tint_lang_core_ir_analysis",
+      "tint_lang_core_ir_transform",
+      "tint_lang_core_ir_type",
+      "tint_lang_core_type",
+      "tint_lang_glsl",
+      "tint_lang_glsl_intrinsic",
+      "tint_lang_glsl_ir",
+      "tint_lang_glsl_writer",
+      "tint_lang_glsl_writer_common",
+      "tint_lang_glsl_writer_printer",
+      "tint_lang_glsl_writer_raise",
+      "tint_lang_hlsl",
+      "tint_lang_hlsl_intrinsic",
+      "tint_lang_hlsl_ir",
+      "tint_lang_hlsl_type",
+      "tint_lang_hlsl_writer",
+      "tint_lang_hlsl_writer_common",
+      "tint_lang_hlsl_writer_printer",
+      "tint_lang_hlsl_writer_raise",
+      "tint_lang_msl",
+      "tint_lang_msl_intrinsic",
+      "tint_lang_msl_ir",
+      "tint_lang_msl_type",
+      "tint_lang_msl_writer",
+      "tint_lang_msl_writer_common",
+      "tint_lang_msl_writer_printer",
+      "tint_lang_msl_writer_raise",
+      "tint_lang_null_writer",
+      "tint_lang_null_writer_common",
+      "tint_lang_null_writer_raise",
+      "tint_lang_spirv",
+      "tint_lang_spirv_intrinsic",
+      "tint_lang_spirv_ir",
+      "tint_lang_spirv_reader",
+      "tint_lang_spirv_reader_common",
+      "tint_lang_spirv_reader_lower",
+      "tint_lang_spirv_reader_parser",
+      "tint_lang_spirv_type",
+      "tint_lang_spirv_validate",
+      "tint_lang_spirv_writer",
+      "tint_lang_spirv_writer_analysis",
+      "tint_lang_spirv_writer_common",
+      "tint_lang_spirv_writer_printer",
+      "tint_lang_spirv_writer_raise",
+      "tint_lang_wgsl",
+      "tint_lang_wgsl_ast",
+      "tint_lang_wgsl_inspector",
+      "tint_lang_wgsl_intrinsic",
+      "tint_lang_wgsl_ir",
+      "tint_lang_wgsl_program",
+      "tint_lang_wgsl_reader",
+      "tint_lang_wgsl_reader_lower",
+      "tint_lang_wgsl_reader_parser",
+      "tint_lang_wgsl_reader_program_to_ir",
+      "tint_lang_wgsl_resolver",
+      "tint_lang_wgsl_sem",
+      "tint_lang_wgsl_writer",
+      "tint_lang_wgsl_writer_ast_printer",
+      "tint_lang_wgsl_writer_common",
+      "tint_lang_wgsl_writer_ir_to_program",
+      "tint_lang_wgsl_writer_raise",
+      "tint_utils",
+      "tint_utils_containers",
+      "tint_utils_diagnostic",
+      "tint_utils_ice",
+      "tint_utils_macros",
+      "tint_utils_math",
+      "tint_utils_memory",
+      "tint_utils_reflection",
+      "tint_utils_rtti",
+      "tint_utils_strconv",
+      "tint_utils_symbol",
+      "tint_utils_system",
+      "tint_utils_text",
+      "tint_utils_text_generator"
+    ],
+    "tint_external_edges": {
+      "tint_lang_spirv_reader_parser": [
+        "spirv-headers",
+        "spirv-opt-internal",
+        "spirv-tools",
+        "src_utils"
+      ],
+      "tint_lang_spirv_validate": [
+        "spirv-tools",
+        "src_utils"
+      ],
+      "tint_lang_spirv_writer": [
+        "spirv-headers",
+        "src_utils"
+      ],
+      "tint_lang_spirv_writer_common": [
+        "spirv-headers",
+        "src_utils"
+      ],
+      "tint_lang_spirv_writer_printer": [
+        "spirv-headers",
+        "src_utils"
+      ],
+      "tint_lang_spirv_writer_raise": [
+        "spirv-headers",
+        "src_utils"
+      ],
+      "tint_utils_strconv": [
+        "abseil",
+        "src_utils"
+      ]
+    },
+    "build_file_evidence": [
+      {
+        "path": "src/dawn/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/CMakeLists.txt",
+        "sha256": "f9130f163fd320ffadd7633ec336a76607772c9739a8b88c132708252c307e60"
+      },
+      {
+        "path": "src/dawn/common/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/common/CMakeLists.txt",
+        "sha256": "5fd69b219a9fe9aba3cd56211d77e5458f09f6abc2a9039895481694c98cedbc"
+      },
+      {
+        "path": "src/dawn/fuzzers/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/fuzzers/CMakeLists.txt",
+        "sha256": "ee88b56b6e54fe2bfcfe9a1353ab03ed04894dc5f229e30f61db267755042b3f"
+      },
+      {
+        "path": "src/dawn/glfw/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/glfw/CMakeLists.txt",
+        "sha256": "650680cdeb6852152cbeb58aa5ecc743477b714363f9e667af209f222f085fca"
+      },
+      {
+        "path": "src/dawn/native/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/native/CMakeLists.txt",
+        "sha256": "1944bdca8022705a1ad6b745efb2f215418e85ecc90a6a273c908e475e4d0e3b"
+      },
+      {
+        "path": "src/dawn/node/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/node/CMakeLists.txt",
+        "sha256": "2757e8cc8298ffa021c0054273d7f2217a7143f204a63c4ed056f8d8080f3baa"
+      },
+      {
+        "path": "src/dawn/node/binding/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/node/binding/CMakeLists.txt",
+        "sha256": "7dc4eac43b08f868c04573a6f1319a3f48d880d3b6231108b6d21549f3507210"
+      },
+      {
+        "path": "src/dawn/node/interop/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/node/interop/CMakeLists.txt",
+        "sha256": "9605296c0e9409bbe896587b6be2da9c7861f6183edbc04d58f787ac89fa23af"
+      },
+      {
+        "path": "src/dawn/partition_alloc/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/partition_alloc/CMakeLists.txt",
+        "sha256": "171fb0e4b9cca451a1cae844742748a95568a1c69bb5f373c5ec0b1739f66822"
+      },
+      {
+        "path": "src/dawn/platform/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/platform/CMakeLists.txt",
+        "sha256": "c150871089b902a334866beff58fd1f86f3c79b0cf1d764387d07cf2b22421d2"
+      },
+      {
+        "path": "src/dawn/replay/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/replay/CMakeLists.txt",
+        "sha256": "4f90273228ebd1f6395ed4e3660bc6a784e3382feb559490325f31d367e062ee"
+      },
+      {
+        "path": "src/dawn/samples/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/samples/CMakeLists.txt",
+        "sha256": "cab252eb8aa42314963c042a0fd8fd67248d4d2427854cd0ccc6785e2a4ceb1c"
+      },
+      {
+        "path": "src/dawn/tests/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/tests/CMakeLists.txt",
+        "sha256": "f53564cdbcdd59931f4037e083b75b4228333968927930317bdd8deb585e873e"
+      },
+      {
+        "path": "src/dawn/tests/benchmarks/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/tests/benchmarks/CMakeLists.txt",
+        "sha256": "bdd5995cba5fea04302ff359cfa7280a091eff5d9b80a589b942d93d56ba2239"
+      },
+      {
+        "path": "src/dawn/utils/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/utils/CMakeLists.txt",
+        "sha256": "115384bd68c1fb644f6c9caac48a0d00fb29031108124021482e0831d84255d4"
+      },
+      {
+        "path": "src/dawn/wire/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/wire/CMakeLists.txt",
+        "sha256": "2fa4dfaee18729a12721d5ee841c2b24f3512091d4c3336da7d03ca813de91f1"
+      },
+      {
+        "path": "src/tint/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/BUILD.cmake",
+        "sha256": "cf0d50d4995eb04d96401fca33db8d24163d2ad9ba2fddd0d58fe1d57804d5da"
+      },
+      {
+        "path": "src/tint/CMakeLists.txt",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/CMakeLists.txt",
+        "sha256": "c51e3c2bdec0e2cd29719e1bb79762d7103c5dd85bb0983f97f4948983ed9746"
+      },
+      {
+        "path": "src/tint/api/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/api/BUILD.cmake",
+        "sha256": "0d2651b6d9d768a6cae902ff7739857105479a631d1622092900558f78d0cd05"
+      },
+      {
+        "path": "src/tint/api/common/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/api/common/BUILD.cmake",
+        "sha256": "694577623a222d8e7c2b77c93d35a583d67751ce083b0c80aef3878055da880d"
+      },
+      {
+        "path": "src/tint/api/helpers/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/api/helpers/BUILD.cmake",
+        "sha256": "427ef2803e57db11e22a3faccbb4a49636b760b1800192fadd6ddd0e0d77333b"
+      },
+      {
+        "path": "src/tint/cmd/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/BUILD.cmake",
+        "sha256": "4dc33d17531390afd71c191afdcd936906ce141e0937d6c4153e95e900b889da"
+      },
+      {
+        "path": "src/tint/cmd/bench/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/bench/BUILD.cmake",
+        "sha256": "7b1225ced853062569d3b319ded2196acb91fae40d791622668b1a55d4108eda"
+      },
+      {
+        "path": "src/tint/cmd/bench/glsl/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/bench/glsl/BUILD.cmake",
+        "sha256": "9af32f0de84d343cf3026b68f944247fe2c1b6056f06ddb2388aff890347e350"
+      },
+      {
+        "path": "src/tint/cmd/bench/hlsl/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/bench/hlsl/BUILD.cmake",
+        "sha256": "516fb7a5ffb70a8400892f7536ff124cca403820201704a818ad30b0f9802680"
+      },
+      {
+        "path": "src/tint/cmd/bench/msl/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/bench/msl/BUILD.cmake",
+        "sha256": "4045fde933d207c31180c55f3193726cad27a2d1213f626317ff1c26f8e67a40"
+      },
+      {
+        "path": "src/tint/cmd/bench/spirv/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/bench/spirv/BUILD.cmake",
+        "sha256": "021d9da23c33dac583cf616ad8f33662e5407f2fedd82b860ce9973e638b074b"
+      },
+      {
+        "path": "src/tint/cmd/bench/wgsl/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/bench/wgsl/BUILD.cmake",
+        "sha256": "056863639deb4bdba82dabb4bc8f9d6a81c14f190a37ed2af379da0600ab72a2"
+      },
+      {
+        "path": "src/tint/cmd/common/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/common/BUILD.cmake",
+        "sha256": "b7c4a4d659a681268246071903def966bcb5899dfd92ec40da0796959c5c76e3"
+      },
+      {
+        "path": "src/tint/cmd/fuzz/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/fuzz/BUILD.cmake",
+        "sha256": "c9b739ab83739c6ee72d5ecb322cb5600cbd90fea7847b83829b522f15873074"
+      },
+      {
+        "path": "src/tint/cmd/fuzz/common/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/fuzz/common/BUILD.cmake",
+        "sha256": "2b456d87b32afb0aebbd0a8634a334b447e25a4514a94292569603e5815e49a0"
+      },
+      {
+        "path": "src/tint/cmd/fuzz/ir/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/fuzz/ir/BUILD.cmake",
+        "sha256": "39ee4c82a570353d3dc67822893b65a97df829b082df50e456455b372218772f"
+      },
+      {
+        "path": "src/tint/cmd/fuzz/ir/as/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/fuzz/ir/as/BUILD.cmake",
+        "sha256": "c3699eca69a034ad3ecc5fd829da869879db641d3665118bec5b8ec6c5e6c2e0"
+      },
+      {
+        "path": "src/tint/cmd/fuzz/ir/dis/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/fuzz/ir/dis/BUILD.cmake",
+        "sha256": "9d3c7ddd734fb34623e284272a966e4de5f89e65fbe72cb850f84f9054a5f463"
+      },
+      {
+        "path": "src/tint/cmd/fuzz/ir_mesa/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/fuzz/ir_mesa/BUILD.cmake",
+        "sha256": "bca3b079a54b7de5e606e310e874ef039873f181480adcc4ab43f96ff159d8d4"
+      },
+      {
+        "path": "src/tint/cmd/fuzz/wgsl/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/fuzz/wgsl/BUILD.cmake",
+        "sha256": "7973073b838b816dd4025b8577fe95bd19759986bc9d784924510d59672a50e0"
+      },
+      {
+        "path": "src/tint/cmd/fuzz/wgsl_mesa/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/fuzz/wgsl_mesa/BUILD.cmake",
+        "sha256": "dee717ccd45496e61b3d8b4fb338e699cd846da9035f3761214ebdc6b636b9a9"
+      },
+      {
+        "path": "src/tint/cmd/info/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/info/BUILD.cmake",
+        "sha256": "50b636ed66c0ee64c2653873bdd1630fc87ef60664cf4982e53875d2f72d1419"
+      },
+      {
+        "path": "src/tint/cmd/test/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/test/BUILD.cmake",
+        "sha256": "b41df4375015e5cfa3a50fdc0e474b4971361aa714be84d5b2764cfd6f3a4ea9"
+      },
+      {
+        "path": "src/tint/cmd/tint/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/tint/BUILD.cmake",
+        "sha256": "1b3a0e5ce79235ec8f07be2b33c294ac76c99df7b5a91c147d6292969f37a2d6"
+      },
+      {
+        "path": "src/tint/cmd/tintd/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/cmd/tintd/BUILD.cmake",
+        "sha256": "15a46c9ae81196ed5cf86412685bd34405f78cbc90264206cac5fc0e2ebe39ff"
+      },
+      {
+        "path": "src/tint/lang/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/BUILD.cmake",
+        "sha256": "b59055ac1b485343a78c11685910c3a80815c2fca3e55c87cbc76fb195ee0ead"
+      },
+      {
+        "path": "src/tint/lang/core/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/core/BUILD.cmake",
+        "sha256": "5404f2166f2de6c33708da0e25194deae930c23ea8e4923e9c88cebca9f79ee5"
+      },
+      {
+        "path": "src/tint/lang/core/constant/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/core/constant/BUILD.cmake",
+        "sha256": "caf39d272f0b1337a80ab58cc656e89832be18eeeabf7789c85e80afaba3bc09"
+      },
+      {
+        "path": "src/tint/lang/core/intrinsic/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/core/intrinsic/BUILD.cmake",
+        "sha256": "aebe4ab6085510c8d401febd917570229e5a13f8fdfb800acc2d670dc8cbebe8"
+      },
+      {
+        "path": "src/tint/lang/core/ir/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/core/ir/BUILD.cmake",
+        "sha256": "83a7e831e561a7e2d353bef168ca806444fdcfe45879a920fc70ffa3ae4de021"
+      },
+      {
+        "path": "src/tint/lang/core/ir/analysis/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/core/ir/analysis/BUILD.cmake",
+        "sha256": "700760354bee60f27646fa279bd017735a247f349265936661e8041b372ac280"
+      },
+      {
+        "path": "src/tint/lang/core/ir/binary/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/core/ir/binary/BUILD.cmake",
+        "sha256": "3c2735f28e1714ac28e3206fea98c1cc30657bf2d95fe32e662a087430414262"
+      },
+      {
+        "path": "src/tint/lang/core/ir/transform/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/core/ir/transform/BUILD.cmake",
+        "sha256": "24c7adb8758677e6f718581ac1bdd64067f006bbb9c9a48f0541c7bc4428cc8a"
+      },
+      {
+        "path": "src/tint/lang/core/ir/type/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/core/ir/type/BUILD.cmake",
+        "sha256": "6c4da83c89be5d27ddb7e07e8b2d1f8305a85fc94f7abe42035e4e9862141ac9"
+      },
+      {
+        "path": "src/tint/lang/core/type/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/core/type/BUILD.cmake",
+        "sha256": "6c64edf0209adc1962c68769f9dc774c05b388f4076716751f240860356a795d"
+      },
+      {
+        "path": "src/tint/lang/glsl/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/glsl/BUILD.cmake",
+        "sha256": "b1934ee517f385de31e57a7aaff956c84fc1c022e8302e857abf1125b20483a3"
+      },
+      {
+        "path": "src/tint/lang/glsl/intrinsic/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/glsl/intrinsic/BUILD.cmake",
+        "sha256": "a636cf8dbce5f8a08adc2597b33645adbc0e5d664d167a274b87c473ee6f4b0c"
+      },
+      {
+        "path": "src/tint/lang/glsl/ir/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/glsl/ir/BUILD.cmake",
+        "sha256": "b31f68c1eba34133ee24083a882d7e6d00b63431af17098fde90d1166bddd056"
+      },
+      {
+        "path": "src/tint/lang/glsl/validate/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/glsl/validate/BUILD.cmake",
+        "sha256": "86e5f702952193b57457650fa12dca0e557639d71681472f37c26ae7edfde0ec"
+      },
+      {
+        "path": "src/tint/lang/glsl/writer/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/glsl/writer/BUILD.cmake",
+        "sha256": "f12e4fd188bdbd05fe8352ac1d495df4298f06e6718da324dcf32498a67ce2bc"
+      },
+      {
+        "path": "src/tint/lang/glsl/writer/common/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/glsl/writer/common/BUILD.cmake",
+        "sha256": "7eabb3c2ac2f952943c288f0e672eb4429f93282a8e48bf859a06fa2fb2a3f55"
+      },
+      {
+        "path": "src/tint/lang/glsl/writer/helpers/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/glsl/writer/helpers/BUILD.cmake",
+        "sha256": "6e739f14d3cb8fbe95156beef7574c0bd9a18d466953a97db8fa257566b0b30e"
+      },
+      {
+        "path": "src/tint/lang/glsl/writer/printer/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/glsl/writer/printer/BUILD.cmake",
+        "sha256": "b7ffb6c17b6f03786b2ce29d23c7be043e391d07709824b8a5a6f9cb19570650"
+      },
+      {
+        "path": "src/tint/lang/glsl/writer/raise/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/glsl/writer/raise/BUILD.cmake",
+        "sha256": "b82a11b39a5a6c8f01d992c732b1812fdc55d95bc1fb7c4002e089631e1db94f"
+      },
+      {
+        "path": "src/tint/lang/hlsl/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/hlsl/BUILD.cmake",
+        "sha256": "a5583eaeef568607f16a238498127ee66379afe7411be2f375116cf4720a7fdd"
+      },
+      {
+        "path": "src/tint/lang/hlsl/intrinsic/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/hlsl/intrinsic/BUILD.cmake",
+        "sha256": "0e37284d15a34b9d3e4c2621cd037a09b6e89c17060616f0d07902b622cf50e9"
+      },
+      {
+        "path": "src/tint/lang/hlsl/ir/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/hlsl/ir/BUILD.cmake",
+        "sha256": "836e4216bf734a0e31ead64844107d690f961fb62acf21499043e1aaf8b35061"
+      },
+      {
+        "path": "src/tint/lang/hlsl/type/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/hlsl/type/BUILD.cmake",
+        "sha256": "4a73e098f60786a6a0ff5ad7ed653bad31f49dec87d88d5af32e4481db4f9977"
+      },
+      {
+        "path": "src/tint/lang/hlsl/validate/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/hlsl/validate/BUILD.cmake",
+        "sha256": "d74cf16cd14be0bbed97afb331d85f442906970787c1ed05609de45686474959"
+      },
+      {
+        "path": "src/tint/lang/hlsl/writer/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/hlsl/writer/BUILD.cmake",
+        "sha256": "ddbafaeed75d309757d32629510d7d6cd8e934fed4cd33713b27a5d3863c0519"
+      },
+      {
+        "path": "src/tint/lang/hlsl/writer/common/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/hlsl/writer/common/BUILD.cmake",
+        "sha256": "40749aa21fd4d6c1843ade3ba7e281d48b25c75439b290f5e11e28960009d0cd"
+      },
+      {
+        "path": "src/tint/lang/hlsl/writer/printer/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/hlsl/writer/printer/BUILD.cmake",
+        "sha256": "0ce8f972ecaae44e06242670b3be203a39aad8eb88938acfcfc33cdb2ff146cb"
+      },
+      {
+        "path": "src/tint/lang/hlsl/writer/raise/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/hlsl/writer/raise/BUILD.cmake",
+        "sha256": "307e679132dcec37f5e093cfe382bd9fecb09cd015d9ac1b816ce077db2bfd64"
+      },
+      {
+        "path": "src/tint/lang/msl/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/msl/BUILD.cmake",
+        "sha256": "528d132bb06228fdacc309c0a486dcf6373e63b043ab42174d0c7af4ddb76472"
+      },
+      {
+        "path": "src/tint/lang/msl/intrinsic/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/msl/intrinsic/BUILD.cmake",
+        "sha256": "ae69d49695a1972d8c61bde25f9a8ccfdcf8036004d669bc21b2f584df0864eb"
+      },
+      {
+        "path": "src/tint/lang/msl/ir/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/msl/ir/BUILD.cmake",
+        "sha256": "689fcae06dd1645d2c3c78335a571c49d0b859490ba880aca0a2790bdbf4a522"
+      },
+      {
+        "path": "src/tint/lang/msl/type/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/msl/type/BUILD.cmake",
+        "sha256": "1526a42e72b64c8b260d42ecdff730b53c14f3205b540d879ebf286b76fcd58e"
+      },
+      {
+        "path": "src/tint/lang/msl/validate/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/msl/validate/BUILD.cmake",
+        "sha256": "8e8008616bbc0f87dd7393f49b4a95e1dfe6bab0c7a6b3664c37bacd9b9bf36c"
+      },
+      {
+        "path": "src/tint/lang/msl/writer/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/msl/writer/BUILD.cmake",
+        "sha256": "c2732e09e41668ceda6b89f83f3a7ee9877f30aa43b11a9edfc4f6cf8bf2bc8d"
+      },
+      {
+        "path": "src/tint/lang/msl/writer/common/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/msl/writer/common/BUILD.cmake",
+        "sha256": "7b39f37db3cbf98fbeba0865bbc44234e8efb3fdc2979ee0436766ed2e0859d7"
+      },
+      {
+        "path": "src/tint/lang/msl/writer/printer/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/msl/writer/printer/BUILD.cmake",
+        "sha256": "9c2f89d5c2dcdb042466515bcca5d5177e6f4a181aaf057ef8c5aea3d0fa1f05"
+      },
+      {
+        "path": "src/tint/lang/msl/writer/raise/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/msl/writer/raise/BUILD.cmake",
+        "sha256": "5ec967bdda955884706069197a3907e7d2c593ccaca55c9b4548ab6af28eb12c"
+      },
+      {
+        "path": "src/tint/lang/null/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/null/BUILD.cmake",
+        "sha256": "0eec7e9996e609d41ed9e7fcabd0dc5e029cbe7f1f488f49b5d496a09002025c"
+      },
+      {
+        "path": "src/tint/lang/null/writer/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/null/writer/BUILD.cmake",
+        "sha256": "f202e046926828c2f48985165b2f12cc71895807487a2428f4e36451214e2656"
+      },
+      {
+        "path": "src/tint/lang/null/writer/common/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/null/writer/common/BUILD.cmake",
+        "sha256": "93294f258767e458097eb603c992f911c703368ec17e646ab8809a734fb582a0"
+      },
+      {
+        "path": "src/tint/lang/null/writer/raise/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/null/writer/raise/BUILD.cmake",
+        "sha256": "d33cca71aeab617159495928dfbb7a6d66f7e08dde7ed8a0a80638bcf6ef934b"
+      },
+      {
+        "path": "src/tint/lang/spirv/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/BUILD.cmake",
+        "sha256": "e8e83bb21b35edc63ca324a8fc7317b3fdeab8f197bbbeb79fa9b65ef5fc2e06"
+      },
+      {
+        "path": "src/tint/lang/spirv/intrinsic/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/intrinsic/BUILD.cmake",
+        "sha256": "05e2698a852359111ec01908588ec01e3de718da2b2abdab7ab494d3e4a31601"
+      },
+      {
+        "path": "src/tint/lang/spirv/ir/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/ir/BUILD.cmake",
+        "sha256": "c1129aaa30b1b85fafc29c360087d40d8d8520f0918f2565db95c115db8ccc01"
+      },
+      {
+        "path": "src/tint/lang/spirv/reader/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/reader/BUILD.cmake",
+        "sha256": "9999e926eccb252332ae97ced18eba069299576dd17667c292d6dbe40b89299c"
+      },
+      {
+        "path": "src/tint/lang/spirv/reader/common/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/reader/common/BUILD.cmake",
+        "sha256": "0e1016463aa9668f13d372e934294553455126e295ae81411412a97336934dd0"
+      },
+      {
+        "path": "src/tint/lang/spirv/reader/lower/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/reader/lower/BUILD.cmake",
+        "sha256": "e882d13e269a6299e004ddcc8ee72c8b42cc9cec2633b99090f81204e85204cc"
+      },
+      {
+        "path": "src/tint/lang/spirv/reader/parser/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/reader/parser/BUILD.cmake",
+        "sha256": "3fe106257e4928e4b33642229fdee41bde2fc54df2dbe4dc6417627ca7bcde32"
+      },
+      {
+        "path": "src/tint/lang/spirv/type/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/type/BUILD.cmake",
+        "sha256": "296ed50ad91ff0baee58d673e160dec4e49b8e00548964b82b5383f9124de7ac"
+      },
+      {
+        "path": "src/tint/lang/spirv/validate/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/validate/BUILD.cmake",
+        "sha256": "71ddbb91c11bdd83939fd5737f9f1b07961a6e8b193c6560032fb235b6a57bce"
+      },
+      {
+        "path": "src/tint/lang/spirv/writer/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/writer/BUILD.cmake",
+        "sha256": "c090d2c9ef462b062e2a1b1be8b808096319d8cba6ba8f4ff8c4fae9c467cc29"
+      },
+      {
+        "path": "src/tint/lang/spirv/writer/analysis/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/writer/analysis/BUILD.cmake",
+        "sha256": "4ef7cd86fe15d8e75e45860eef078313a7766f774c9eefbea9cbfc60c361a4a2"
+      },
+      {
+        "path": "src/tint/lang/spirv/writer/common/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/writer/common/BUILD.cmake",
+        "sha256": "2c6c6a1123d1dc65a711ce1545669819822c93d2bfa346fec9040265663927bb"
+      },
+      {
+        "path": "src/tint/lang/spirv/writer/printer/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/writer/printer/BUILD.cmake",
+        "sha256": "83b8f81f99449cdccbca6d685b13c9acd00a5e101806d89362cdbd81729c6937"
+      },
+      {
+        "path": "src/tint/lang/spirv/writer/raise/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/writer/raise/BUILD.cmake",
+        "sha256": "5001e6cc19e7874d458a1255873bdd9b429d82a4b19fcd38fec279d0eee3c568"
+      },
+      {
+        "path": "src/tint/lang/wgsl/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/BUILD.cmake",
+        "sha256": "f69e987aa79a24b2fc75f27a691c68f1df1e9934135041524910870ffeca1d20"
+      },
+      {
+        "path": "src/tint/lang/wgsl/ast/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/ast/BUILD.cmake",
+        "sha256": "b45ea5ab3af3f0fd53fa479fdeb9b89d4e219466ec07f8fe70f2e844be3710ff"
+      },
+      {
+        "path": "src/tint/lang/wgsl/inspector/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/inspector/BUILD.cmake",
+        "sha256": "d1542d2f539478ed69097c2d3c14f0b2d796104789530f3b06eca08fa5bb8046"
+      },
+      {
+        "path": "src/tint/lang/wgsl/intrinsic/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/intrinsic/BUILD.cmake",
+        "sha256": "c3581209b7c887265a52a193938549265e35812726544f75029d61c7ee8b7a03"
+      },
+      {
+        "path": "src/tint/lang/wgsl/ir/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/ir/BUILD.cmake",
+        "sha256": "180c11e89d655f6cfb1496345b8dc75adcfa8d44075486e556311d11dee9a8aa"
+      },
+      {
+        "path": "src/tint/lang/wgsl/ls/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/ls/BUILD.cmake",
+        "sha256": "3e10e7369e29536128fa458e573e42a30dcabce52329da03477a3d3aa32c653f"
+      },
+      {
+        "path": "src/tint/lang/wgsl/program/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/program/BUILD.cmake",
+        "sha256": "a88b7fdf3f95972746a4cb87972736df8a2f52ed3b35f59e0db2b2d68e556720"
+      },
+      {
+        "path": "src/tint/lang/wgsl/reader/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/reader/BUILD.cmake",
+        "sha256": "399c9999b9915118f6c1a1ab04604663336286ce29d7e99f8a055d59b11a9153"
+      },
+      {
+        "path": "src/tint/lang/wgsl/reader/lower/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/reader/lower/BUILD.cmake",
+        "sha256": "c97f76a53e51523a4b46ecd6a3b9e9700ff6dc7cf46e8fcafc2a4dd523d49cd3"
+      },
+      {
+        "path": "src/tint/lang/wgsl/reader/parser/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/reader/parser/BUILD.cmake",
+        "sha256": "d1e851cdf9c3e4bd901a814eeae374436adc63f9e0e8a63f7c6d3a45d3be5ca7"
+      },
+      {
+        "path": "src/tint/lang/wgsl/reader/program_to_ir/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/reader/program_to_ir/BUILD.cmake",
+        "sha256": "528c9e1db083d0bae1c6e01270aa95f6c5a381d652eb42a32f217b0a2141cc45"
+      },
+      {
+        "path": "src/tint/lang/wgsl/resolver/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/resolver/BUILD.cmake",
+        "sha256": "cadd401b818b2dd3aa7f26567f0d92f39296810012ef5398b2fafd3a2a84234c"
+      },
+      {
+        "path": "src/tint/lang/wgsl/sem/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/sem/BUILD.cmake",
+        "sha256": "e9adc6219c55eeb7df179d10f38dce5b138f0faaafefe513a454ce029bf67ec4"
+      },
+      {
+        "path": "src/tint/lang/wgsl/writer/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/writer/BUILD.cmake",
+        "sha256": "c7f334808f0546e0cb11c1416d758f08f1f0e65e94f9d34bc2f97b30a3181284"
+      },
+      {
+        "path": "src/tint/lang/wgsl/writer/ast_printer/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/writer/ast_printer/BUILD.cmake",
+        "sha256": "95a7be95200fdc8fc91fa9a3207eedebf9959b16b3fcbaf4baac52360a0ccf0c"
+      },
+      {
+        "path": "src/tint/lang/wgsl/writer/common/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/writer/common/BUILD.cmake",
+        "sha256": "90506f3a4046db78dce70c703f3917be2bf981222be1a781b63c0e144b0323a1"
+      },
+      {
+        "path": "src/tint/lang/wgsl/writer/ir_to_program/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/writer/ir_to_program/BUILD.cmake",
+        "sha256": "17dd5d195fc995de50cb86cd961b562a7859a7b8dccfbd5ae539992407c215df"
+      },
+      {
+        "path": "src/tint/lang/wgsl/writer/raise/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/wgsl/writer/raise/BUILD.cmake",
+        "sha256": "2af277f4f9639ea32bf143c6d9d70668a38246c2b9c1da7cb180b766a0875cca"
+      },
+      {
+        "path": "src/tint/utils/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/BUILD.cmake",
+        "sha256": "a3e6a9948eeb79a5306a0beaa692c53a8c1351bd776fa7f850a256dded5f52b4"
+      },
+      {
+        "path": "src/tint/utils/bytes/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/bytes/BUILD.cmake",
+        "sha256": "6edd4323e35304b9265ac76681192ce5f031897a12459f7f8dd4c8d92bf30aba"
+      },
+      {
+        "path": "src/tint/utils/command/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/command/BUILD.cmake",
+        "sha256": "8c21a38ed9d11077311c6b490abe86a12dfb98a0257f154bba5441d71da9e8e2"
+      },
+      {
+        "path": "src/tint/utils/containers/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/containers/BUILD.cmake",
+        "sha256": "b37ba03e89ca3074229a5bcadd112ad2e67fa61bf82dd5c7fec9c42358f365b4"
+      },
+      {
+        "path": "src/tint/utils/diagnostic/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/diagnostic/BUILD.cmake",
+        "sha256": "aa6380ec8025a76fbb695d311f9269cafaf961d842d714056a35b1bc910043a2"
+      },
+      {
+        "path": "src/tint/utils/file/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/file/BUILD.cmake",
+        "sha256": "07be07a4fc55358e5124cddc2e49fe0f49913b98444b3aeb84daf99785d80b84"
+      },
+      {
+        "path": "src/tint/utils/ice/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/ice/BUILD.cmake",
+        "sha256": "f4dd8700631b0b5592f16952687b2f0749b42fb9cf8f3db5307fdfe2896d0b8e"
+      },
+      {
+        "path": "src/tint/utils/macros/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/macros/BUILD.cmake",
+        "sha256": "2eac8a14ceccba587b2fab531030b949f71ffe3e8dee051d091bc006d5615467"
+      },
+      {
+        "path": "src/tint/utils/math/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/math/BUILD.cmake",
+        "sha256": "4314240d3af6738fe5ccc01e7b17e9f5573f8c06226f231085beccea03071f70"
+      },
+      {
+        "path": "src/tint/utils/memory/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/memory/BUILD.cmake",
+        "sha256": "47f00886a123370163c9e1dc4787bae0d03f55111255a767f4bdc0a119796060"
+      },
+      {
+        "path": "src/tint/utils/protos/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/protos/BUILD.cmake",
+        "sha256": "aff9fda749b20df00d9c97c27dd2f943eab786c7da9bae74621a23d0269c7bed"
+      },
+      {
+        "path": "src/tint/utils/protos/ir/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/protos/ir/BUILD.cmake",
+        "sha256": "e0656f2d273fc54822681879480d9f3c4147ba40e5fc2ecfc8685a310a4d97ac"
+      },
+      {
+        "path": "src/tint/utils/protos/ir_fuzz/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/protos/ir_fuzz/BUILD.cmake",
+        "sha256": "550ce7407ecc8f2a552aa752da2714999724df4c7b532d2e0b23b6ad9ccafa0f"
+      },
+      {
+        "path": "src/tint/utils/reflection/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/reflection/BUILD.cmake",
+        "sha256": "91816a0a231622812922c91ae7fca79bbfe4a7284da12a4df9bc1077003c46a2"
+      },
+      {
+        "path": "src/tint/utils/rtti/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/rtti/BUILD.cmake",
+        "sha256": "7f8731ec5eb0e520da4bbfb6af91712e40cc6a487654ee57cf57ceff5ddb23e7"
+      },
+      {
+        "path": "src/tint/utils/strconv/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/strconv/BUILD.cmake",
+        "sha256": "c144672023490db701aeedbe56572de434e9242320dfc4e4f5f180c552947d90"
+      },
+      {
+        "path": "src/tint/utils/symbol/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/symbol/BUILD.cmake",
+        "sha256": "71cc620921a12cbce99df4707e9ec8f9575d3cf2baf855f47c098638a5637425"
+      },
+      {
+        "path": "src/tint/utils/system/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/system/BUILD.cmake",
+        "sha256": "0438638ab08281a6b702e0864a3eab38b9983acebe0d8bdd77604051b3a2bce4"
+      },
+      {
+        "path": "src/tint/utils/text/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/text/BUILD.cmake",
+        "sha256": "6a52c9f1263205530f69e219fa4fd2cd230010cec3bfdf0d3be0ebfd14bbf411"
+      },
+      {
+        "path": "src/tint/utils/text_generator/BUILD.cmake",
+        "url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/text_generator/BUILD.cmake",
+        "sha256": "fe1734af23fd2102f64ebcc1f704218b9007af9f25ec7240b431a7384b465307"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "dawn-tint",
+      "revision": "266c1cf8de969a364afa4fa49311631fc99a881e",
+      "source_url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/LICENSE",
+      "platforms": [
+        "windows-x86_64",
+        "linux-x86_64",
+        "linux-aarch64",
+        "macos-x86_64",
+        "macos-arm64"
+      ],
+      "role": "linked",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/native/CMakeLists.txt#L1018-L1089",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/partition_alloc/CMakeLists.txt",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/api/BUILD.cmake"
+      ],
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "url": "https://raw.githubusercontent.com/encounter/dawn/266c1cf8de969a364afa4fa49311631fc99a881e/LICENSE",
+          "sha256": "0493f897193af1796d5054659f45ec7d4c5af648fa67a99f01d30e55cc805abc"
+        }
+      ]
+    },
+    {
+      "id": "abseil",
+      "revision": "a09ceefd500400d44708586515203b7804b73760",
+      "source_url": "https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp/+/a09ceefd500400d44708586515203b7804b73760/",
+      "platforms": [
+        "windows-x86_64",
+        "linux-x86_64",
+        "linux-aarch64",
+        "macos-x86_64",
+        "macos-arm64"
+      ],
+      "role": "linked",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/native/CMakeLists.txt#L925-L935",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/common/CMakeLists.txt#L166-L185",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/utils/strconv/BUILD.cmake",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L44-L64"
+      ],
+      "licenses": [
+        {
+          "file": "abseil-LICENSE",
+          "url": "https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp/+/a09ceefd500400d44708586515203b7804b73760/LICENSE?format=TEXT",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ]
+    },
+    {
+      "id": "spirv-headers",
+      "revision": "1e770e7de8373a8dd49f23416cf7ca4001d01040",
+      "source_url": "https://github.com/KhronosGroup/SPIRV-Headers/tree/1e770e7de8373a8dd49f23416cf7ca4001d01040",
+      "platforms": [
+        "windows-x86_64",
+        "linux-x86_64",
+        "linux-aarch64"
+      ],
+      "role": "compiled-header",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/writer/BUILD.cmake",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/reader/parser/BUILD.cmake",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L125-L144"
+      ],
+      "licenses": [
+        {
+          "file": "SPIRV-Headers-LICENSE",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/1e770e7de8373a8dd49f23416cf7ca4001d01040/LICENSE",
+          "sha256": "ea43b1de38a6f90c488800d66dec1ed671e68cda530266bc96951fb5b6307613"
+        }
+      ]
+    },
+    {
+      "id": "spirv-tools",
+      "revision": "12a6f05b92753f1cbbbc9e13612adc4c7b1c0c72",
+      "source_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/12a6f05b92753f1cbbbc9e13612adc4c7b1c0c72",
+      "platforms": [
+        "windows-x86_64",
+        "linux-x86_64",
+        "linux-aarch64"
+      ],
+      "role": "linked",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/lang/spirv/reader/parser/BUILD.cmake",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L134-L145",
+        "https://github.com/KhronosGroup/SPIRV-Tools/blob/12a6f05b92753f1cbbbc9e13612adc4c7b1c0c72/external/CMakeLists.txt"
+      ],
+      "licenses": [
+        {
+          "file": "SPIRV-Tools-LICENSE",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/12a6f05b92753f1cbbbc9e13612adc4c7b1c0c72/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "id": "vulkan-headers",
+      "revision": "01393c3df0e5285b54ee6527466513f9e614be94",
+      "source_url": "https://github.com/KhronosGroup/Vulkan-Headers/tree/01393c3df0e5285b54ee6527466513f9e614be94",
+      "platforms": [
+        "windows-x86_64",
+        "linux-x86_64",
+        "linux-aarch64"
+      ],
+      "role": "compiled-header",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/native/CMakeLists.txt#L857-L860",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L189-L194"
+      ],
+      "licenses": [
+        {
+          "file": "Vulkan-Headers-LICENSE.md",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/01393c3df0e5285b54ee6527466513f9e614be94/LICENSE.md",
+          "sha256": "ac24e5ea920e4318e4d02c4086ae51f53cfb03feed06c18df1019e7ada1ec7bc"
+        },
+        {
+          "file": "Vulkan-Headers-Apache-2.0.txt",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/01393c3df0e5285b54ee6527466513f9e614be94/LICENSES/Apache-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "file": "Vulkan-Headers-MIT.txt",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/01393c3df0e5285b54ee6527466513f9e614be94/LICENSES/MIT.txt",
+          "sha256": "1ca3502222d967f3be5751c55f6b7ee735b5383909c3b501495f54b216dbf227"
+        }
+      ]
+    },
+    {
+      "id": "vulkan-utility-headers",
+      "revision": "8183a0b86632bf1107553eab1e69d7b85d455477",
+      "source_url": "https://github.com/KhronosGroup/Vulkan-Utility-Libraries/tree/8183a0b86632bf1107553eab1e69d7b85d455477",
+      "platforms": [
+        "windows-x86_64",
+        "linux-x86_64",
+        "linux-aarch64"
+      ],
+      "role": "compiled-header",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/native/CMakeLists.txt#L857-L860",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L201-L204"
+      ],
+      "licenses": [
+        {
+          "file": "Vulkan-Utility-LICENSE.md",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/8183a0b86632bf1107553eab1e69d7b85d455477/LICENSE.md",
+          "sha256": "69760673abf91cfd0280ae73739a29c078f493804d9016a122b3b189b48ad6e6"
+        },
+        {
+          "file": "Vulkan-Utility-Apache-2.0.txt",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/8183a0b86632bf1107553eab1e69d7b85d455477/LICENSES/Apache-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "id": "renderdoc-api",
+      "revision": "266c1cf8de969a364afa4fa49311631fc99a881e",
+      "source_url": "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/renderdoc/renderdoc/api/app/renderdoc_app.h",
+      "platforms": [
+        "windows-x86_64",
+        "linux-x86_64",
+        "linux-aarch64"
+      ],
+      "role": "compiled-header",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L176-L180",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/native/CMakeLists.txt#L885-L889"
+      ],
+      "licenses": [
+        {
+          "file": "third_party_renderdoc_LICENSE.md",
+          "url": "https://raw.githubusercontent.com/encounter/dawn/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/renderdoc/LICENSE.md",
+          "sha256": "b921912e9e433291f6010631a0dd41cec76c4a877966ecc22ba86151b2e66718"
+        }
+      ]
+    },
+    {
+      "id": "egl-registry",
+      "revision": "3d7796b3721d93976b6bfe536aa97bbc4bce8667",
+      "source_url": "https://github.com/KhronosGroup/EGL-Registry/tree/3d7796b3721d93976b6bfe536aa97bbc4bce8667",
+      "platforms": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ],
+      "role": "compiled-header",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L182-L187"
+      ],
+      "licenses": [
+        {
+          "file": "third_party_EGL-Registry_LICENSE",
+          "url": "https://raw.githubusercontent.com/encounter/dawn/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/EGL-Registry/LICENSE",
+          "sha256": "4782253b8777b2c679544b31b18a52616d3c2ba0515dcf695e262bd318b356f0"
+        }
+      ]
+    },
+    {
+      "id": "opengl-registry",
+      "revision": "9d527dbc81bb76e35ba284fe385ed8a5ddb90cbc",
+      "source_url": "https://github.com/KhronosGroup/OpenGL-Registry/tree/9d527dbc81bb76e35ba284fe385ed8a5ddb90cbc",
+      "platforms": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ],
+      "role": "compiled-header",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/native/CMakeLists.txt#L670-L681"
+      ],
+      "licenses": [
+        {
+          "file": "third_party_OpenGL-Registry_LICENSE",
+          "url": "https://raw.githubusercontent.com/encounter/dawn/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/OpenGL-Registry/LICENSE",
+          "sha256": "d20809e7f3c8116615249bdefdc826c29b0b8332e7ac7ac249fd3949b716e8c5"
+        }
+      ]
+    },
+    {
+      "id": "dxc-compiler",
+      "revision": "363b46013d143973d69939a2ad52b186d2c77558",
+      "source_url": "https://github.com/microsoft/DirectXShaderCompiler/tree/363b46013d143973d69939a2ad52b186d2c77558",
+      "platforms": [
+        "windows-x86_64"
+      ],
+      "role": "runtime",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/.github/workflows/dawn-ci.cmake#L20-L28",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L235-L365",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/.github/workflows/release.yml#L172-L178"
+      ],
+      "licenses": [
+        {
+          "file": "DXC-LICENSE.TXT",
+          "url": "https://raw.githubusercontent.com/microsoft/DirectXShaderCompiler/363b46013d143973d69939a2ad52b186d2c77558/LICENSE.TXT",
+          "sha256": "27a49e35d1da96eba18fba54bc882667ff0ff8c0254f16f2b6e165d605ba7df8"
+        },
+        {
+          "file": "DXC-ThirdPartyNotices.txt",
+          "url": "https://raw.githubusercontent.com/microsoft/DirectXShaderCompiler/363b46013d143973d69939a2ad52b186d2c77558/ThirdPartyNotices.txt",
+          "sha256": "19512a5d0a015ef16d167272c164da49a604614a786206212a80ad486ed0be6d"
+        }
+      ]
+    },
+    {
+      "id": "dxc-validator",
+      "revision": "01b62ad47db7dee3dd33f90e7339cf9e860b3f93",
+      "source_url": "https://github.com/microsoft/DirectXShaderCompiler/tree/01b62ad47db7dee3dd33f90e7339cf9e860b3f93",
+      "platforms": [
+        "windows-x86_64"
+      ],
+      "role": "runtime",
+      "evidence": [
+        "https://github.com/microsoft/DirectXShaderCompiler/releases/tag/v1.9.2609",
+        "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip"
+      ],
+      "licenses": [
+        {
+          "file": "DXIL-LICENSE-LLVM.txt",
+          "url": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip#LICENSE-LLVM.txt",
+          "sha256": "729615317e28dd03907e46f0fc3b5e88f7853cee61d1a1471d2749335516b46f"
+        },
+        {
+          "file": "DXIL-LICENSE-MS.txt",
+          "url": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip#LICENSE-MS.txt",
+          "sha256": "734f72f239fe7b07b4c7203f294c1a7ce27095687278bab7e56d630d7c672963"
+        },
+        {
+          "file": "DXIL-LICENCE-MIT.txt",
+          "url": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip#LICENCE-MIT.txt",
+          "sha256": "903df5512f7d02609fed0c780a9b704f5a3eeb6e4d84ebe42a29845c81899a3c"
+        },
+        {
+          "file": "DXIL-ThirdPartyNotices.txt",
+          "url": "https://raw.githubusercontent.com/microsoft/DirectXShaderCompiler/01b62ad47db7dee3dd33f90e7339cf9e860b3f93/ThirdPartyNotices.txt",
+          "sha256": "19512a5d0a015ef16d167272c164da49a604614a786206212a80ad486ed0be6d"
+        }
+      ]
+    }
+  ],
+  "excluded_components": [
+    {
+      "id": "glslang",
+      "reason": "Command/validator support is not reachable from tint_api; TINT_BUILD_CMD_TOOLS=OFF prevents adding glslang.",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/.github/workflows/dawn-ci.cmake",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L147-L156",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/api/BUILD.cmake"
+      ]
+    },
+    {
+      "id": "protobuf-libprotobuf-mutator",
+      "reason": "IR binary support OFF, tests/fuzzers/benchmarks OFF; neither is in the tint_api transitive closure.",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/.github/workflows/dawn-ci.cmake",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/api/BUILD.cmake",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/CMakeLists.txt"
+      ]
+    },
+    {
+      "id": "googletest-re2-effcee-benchmarks",
+      "reason": "Tests, executable tools and benchmarks are disabled; SPIRV_SKIP_TESTS and SPIRV_SKIP_EXECUTABLES forced ON.",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/.github/workflows/dawn-ci.cmake",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L134-L145"
+      ]
+    },
+    {
+      "id": "mimalloc",
+      "reason": "Not in Dawn DEPS checkout; SPIRV-Tools requires MIMALLOC_DIR and static builds explicitly default OFF.",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/DEPS",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L134-L145"
+      ]
+    },
+    {
+      "id": "swiftshader-angle-vulkan-loader-vulkan-tools-vulkan-validation-layers-vma",
+      "reason": "Not linked into shipped webgpu_dawn. Swiftshader OFF; Vulkan Loader only fuzz support; other fetched backend tooling/optional deps have no bundled target edges.",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/CMakeLists.txt#L170-L173",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L196-L212",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/native/CMakeLists.txt#L918-L969"
+      ]
+    },
+    {
+      "id": "jsoncpp-langsvr-mesa",
+      "reason": "Language server and Mesa support OFF; no tint_api transitive target dependency.",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/CMakeLists.txt#L257-L266",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L367-L375",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/api/BUILD.cmake"
+      ]
+    },
+    {
+      "id": "glfw-webgpu-headers-webgpu-cts",
+      "reason": "Sample/window utility/test inputs disabled and not in shipped monolithic target.",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/.github/workflows/dawn-ci.cmake",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/CMakeLists.txt#L150-L176",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/native/CMakeLists.txt#L1018-L1089"
+      ]
+    },
+    {
+      "id": "agility-sdk-directx-headers",
+      "reason": "Dawn CMake release uses platform SDK headers on Windows; external DirectX-Headers only used by non-Windows built-DXC, which release config does not enable.",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt#L279-L294",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/.github/workflows/dawn-ci.cmake",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/native/CMakeLists.txt"
+      ]
+    },
+    {
+      "id": "libdrm-libcxx-libcxxabi-llvm-libc-zlib",
+      "reason": "DEPS entries support Chromium GN/toolchain; not linked by this release CMake bundled target. Platform C/C++ runtimes and OS frameworks are system imports, not copied from these deps.",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/DEPS#L110-L149",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/third_party/CMakeLists.txt",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/dawn/native/CMakeLists.txt"
+      ]
+    },
+    {
+      "id": "python-jinja-markupsafe-go-build-tools",
+      "reason": "Build-time generators only; not shipped runtime objects.",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/DEPS",
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/src/tint/CMakeLists.txt"
+      ]
+    },
+    {
+      "id": "upstream-sdk-dxil",
+      "reason": "Ambiguous original SDK binary is deliberately replaced during package staging by the hash-pinned official DXC validator in windows_dxil.",
+      "evidence": [
+        "https://github.com/encounter/dawn/blob/266c1cf8de969a364afa4fa49311631fc99a881e/.github/workflows/release.yml#L172-L178"
+      ]
+    }
+  ],
+  "windows_dxil": {
+    "source": "official-dxc-release",
+    "release": "v1.9.2609",
+    "release_commit": "01b62ad47db7dee3dd33f90e7339cf9e860b3f93",
+    "asset_name": "dxc_2026_09_29.zip",
+    "asset_url": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip",
+    "asset_sha256": "ad31b1fc8443175d204f77a611fdb3ef2ec42759bdc2f1167368de24a4a7e7f1",
+    "asset_size": 32287592,
+    "member": "bin/x64/dxil.dll",
+    "binary_sha256": "64be2368211d257a038a7d4ea6bb3e24c878eb8d588c7b8414fccf759b69c2ac",
+    "product_version": "1.9.2609.5 (01b62ad47)",
+    "license_component": "dxc-validator",
+    "release_api_url": "https://api.github.com/repos/microsoft/DirectXShaderCompiler/releases/tags/v1.9.2609"
+  },
+  "files": {
+    "LICENSE": "0493f897193af1796d5054659f45ec7d4c5af648fa67a99f01d30e55cc805abc",
+    "abseil-LICENSE": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747",
+    "SPIRV-Headers-LICENSE": "ea43b1de38a6f90c488800d66dec1ed671e68cda530266bc96951fb5b6307613",
+    "SPIRV-Tools-LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "Vulkan-Headers-LICENSE.md": "ac24e5ea920e4318e4d02c4086ae51f53cfb03feed06c18df1019e7ada1ec7bc",
+    "Vulkan-Headers-Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "Vulkan-Headers-MIT.txt": "1ca3502222d967f3be5751c55f6b7ee735b5383909c3b501495f54b216dbf227",
+    "Vulkan-Utility-LICENSE.md": "69760673abf91cfd0280ae73739a29c078f493804d9016a122b3b189b48ad6e6",
+    "Vulkan-Utility-Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "third_party_renderdoc_LICENSE.md": "b921912e9e433291f6010631a0dd41cec76c4a877966ecc22ba86151b2e66718",
+    "third_party_EGL-Registry_LICENSE": "4782253b8777b2c679544b31b18a52616d3c2ba0515dcf695e262bd318b356f0",
+    "third_party_OpenGL-Registry_LICENSE": "d20809e7f3c8116615249bdefdc826c29b0b8332e7ac7ac249fd3949b716e8c5",
+    "DXC-LICENSE.TXT": "27a49e35d1da96eba18fba54bc882667ff0ff8c0254f16f2b6e165d605ba7df8",
+    "DXC-ThirdPartyNotices.txt": "19512a5d0a015ef16d167272c164da49a604614a786206212a80ad486ed0be6d",
+    "DXIL-LICENSE-LLVM.txt": "729615317e28dd03907e46f0fc3b5e88f7853cee61d1a1471d2749335516b46f",
+    "DXIL-LICENSE-MS.txt": "734f72f239fe7b07b4c7203f294c1a7ce27095687278bab7e56d630d7c672963",
+    "DXIL-LICENCE-MIT.txt": "903df5512f7d02609fed0c780a9b704f5a3eeb6e4d84ebe42a29845c81899a3c",
+    "DXIL-ThirdPartyNotices.txt": "19512a5d0a015ef16d167272c164da49a604614a786206212a80ad486ed0be6d"
+  }
+}

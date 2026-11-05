@@ -149,6 +149,16 @@ if ($LASTEXITCODE -ne 0) {
 # branches into guest instructions that were data when DolRecomp analyzed the
 # original image, producing a stretched fallback projection or an interpreter
 # trap at 0x80005300.
+# FMA3 where this machine has it: these local modules only run here, and
+# without it the fused multiply-adds the Gekko's float math is written with are
+# libm calls (~3% of the emulation thread). Windows PowerShell has no FMA query;
+# every CPU with AVX2 (PF_AVX2_INSTRUCTIONS_AVAILABLE) also has FMA3. A
+# distribution's modules are built on the player's machine by the launcher,
+# which checks the CPU itself.
+Add-Type -Namespace ColoPackage -Name Cpu -MemberDefinition `
+    '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(uint feature);'
+$moduleArchFlags = if ([ColoPackage.Cpu]::IsProcessorFeaturePresent(40)) { '-mfma' } else { '' }
+
 if (-not $Distribution -and -not $SkipModuleBuild) {
     $port = Join-Path $modernGekkoBuild 'moderngekko-port.exe'
     $moduleOutput = Join-Path $projectRoot 'build\modules'
@@ -167,6 +177,9 @@ if (-not $Distribution -and -not $SkipModuleBuild) {
     }
     foreach ($substitution in (Import-Csv -LiteralPath $nativeSubstManifest)) {
         $portArguments += @('--native-subst', "$($substitution.guest):$($substitution.symbol)")
+    }
+    if ($moduleArchFlags) {
+        $portArguments += @('--arch-flags', $moduleArchFlags)
     }
     & $port @portArguments
     if ($LASTEXITCODE -ne 0) {
@@ -234,7 +247,7 @@ if (-not $Distribution) {
         python (Join-Path $PSScriptRoot 'make-hook-aware-module.py') `
             --src (Join-Path $builtDirectory 'dolrecomp-output\generated') --dst $generated `
             --functions (Join-Path $projectRoot 'patches\GC6E01-functions.csv') `
-            --mods $modsRoot --idle-continuation 800FEB9C | Out-Host
+            --mods $modsRoot --idle-continuation 800FEB9C --idle-loop 800D31E0:800D321C | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "Hook-aware source generation failed: $plainModule" }
         # The same C compiler moderngekko-port built the plain module with (it
         # resolves clang without PATH); plain clang otherwise.
@@ -248,7 +261,8 @@ if (-not $Distribution) {
         cmake -S (Join-Path $modernGekkoRoot 'vendor\dolphin\module-template') `
             -B (Join-Path $out 'build') -G Ninja -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_C_COMPILER=$compiler" -DGAME_ID=GC6E01 "-DGENERATED_DIR=$generated" `
-            -DRECOMPCORE_MODULE_OPT_LEVEL=2 -DRECOMPCORE_MODULE_ENABLE_IPO=ON | Out-Host
+            -DRECOMPCORE_MODULE_OPT_LEVEL=2 -DRECOMPCORE_MODULE_ENABLE_IPO=ON `
+            "-DRECOMPCORE_MODULE_ARCH_FLAGS=$moduleArchFlags" | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "Hook-aware module configuration failed: $plainModule" }
         cmake --build (Join-Path $out 'build') --parallel $ParallelJobs | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "Hook-aware module build failed: $plainModule" }

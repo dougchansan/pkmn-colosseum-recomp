@@ -28,6 +28,8 @@ requested = {}
 mod_hook = re.compile(r'RECOMP_(HOOK_RETURN|HOOK|FORCE_PATCH|PATCH)\(\s*0x([0-9A-Fa-f]{8})u?\s*,')
 for directory in a.mods:
     for source in sorted(directory.glob('*.c')):
+        if "hook-scan: skip" in source.read_text(errors="replace"):
+            continue  # not built for this DOL; see the marker comment
         for kind, addr in mod_hook.findall(source.read_text(errors='replace')):
             addr = int(addr, 16)
             requested[addr] = requested.get(addr, False) or kind == 'HOOK_RETURN'

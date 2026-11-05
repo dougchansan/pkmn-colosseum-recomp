@@ -14,3 +14,5 @@ guest,symbol,note
 800BD2E0,dolrecomp_native_gx_set_projection,GXSetProjection
 800BD554,dolrecomp_native_gx_set_current_mtx,GXSetCurrentMtx
 800BD898,dolrecomp_native_gx_set_matrix_index,__GXSetMatrixIndex
+800FDF1C,dolrecomp_native_msg_get_code_info,_msgGetCodeInfo - observer: remembers the code for the glyph blit that follows (native text)
+800FD69C,dolrecomp_native_msg_glyph_blit,fn_800FD69C glyph blit - observer: reports the glyph slot to the host as BP 0x6A-0x6E (native text)

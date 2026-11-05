@@ -1,0 +1,131 @@
+name: Build standalone artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build'
+        type: choice
+        default: linux
+        options: [linux, all, windows, macos]
+      source_ref:
+        description: 'Optional source tag or commit'
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      platforms:
+        type: string
+        default: linux
+      source_ref:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          SELECTED_PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          linux='{"os":"ubuntu-24.04","label":"linux-x86_64"}'
+          windows='{"os":"windows-2022","label":"windows-x86_64"}'
+          macos='{"os":"macos-15","label":"macos-arm64"}'
+          case "$SELECTED_PLATFORMS" in
+            linux) include="[$linux]" ;;
+            windows) include="[$windows]" ;;
+            macos) include="[$macos]" ;;
+            all) include="[$linux,$windows,$macos]" ;;
+            *) echo 'Unsupported platforms input' >&2; exit 1 ;;
+          esac
+          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Enable Windows long paths
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          submodules: recursive
+      - name: Install Linux build requirements
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build cmake clang \
+            libevdev-dev libudev-dev libx11-dev libxext-dev libxcursor-dev libxfixes-dev \
+            libxi-dev libxrandr-dev libxss-dev libxtst-dev libxinerama-dev libxkbcommon-dev \
+            libgl1-mesa-dev libegl-dev libasound2-dev libpulse-dev libwayland-dev
+      - name: Install macOS Ninja
+        if: runner.os == 'macOS'
+        run: brew install ninja
+      - name: Install Windows Ninja
+        if: runner.os == 'Windows'
+        run: choco install ninja --no-progress -y
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+      - name: Test distribution and local setup
+        shell: bash
+        run: |
+          python scripts/test-package-standalone.py
+          python scripts/test-setup-standalone.py
+      - name: Configure standalone
+        shell: bash
+        run: |
+          args=()
+          if [ "$RUNNER_OS" != Windows ]; then
+            args+=(-DCOLOSSEUM_PORTABLE_DEPENDENCIES=ON)
+          fi
+          cmake -S tools/aurora-mirror -B build/standalone -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCOLOSSEUM_SETUP_RELOCATABLE=ON "${args[@]}"
+      - name: Build standalone host, setup tools and settings tests
+        run: cmake --build build/standalone --target colosseum-standalone colosseum-setup-tools colosseum-host-tests colosseum-pad-tests colosseum-idle-tests colosseum-path-tests --parallel 4
+      - name: Test standalone host without game data
+        if: runner.os != 'Linux'
+        run: ctest --test-dir build/standalone --output-on-failure --no-tests=error -R "^standalone-"
+      - name: Build and test Linux RAM isolation
+        if: runner.os == 'Linux'
+        run: |
+          cmake --build build/standalone --target colosseum-ram-tests --parallel 4
+          ctest --test-dir build/standalone --output-on-failure --no-tests=error -R "^standalone-"
+      - name: Acquire pinned existing DXIL validator
+        if: runner.os == 'Windows'
+        run: python scripts/fetch-standalone-runtime.py
+      - name: Assemble asset-free distribution
+        shell: bash
+        run: |
+          args=()
+          if [ "$RUNNER_OS" = Windows ]; then args+=(--windows); fi
+          python scripts/package-standalone.py --build build/standalone \
+            --output build/artifact/ColosseumStandalone "${args[@]}"
+      - name: Archive distribution preserving Unix executable permissions
+        shell: python
+        env:
+          PACKAGE_LABEL: ${{ matrix.label }}
+        run: |
+          import os
+          from pathlib import Path
+          import shutil
+          Path("build/upload").mkdir(parents=True)
+          archive_format = "zip" if os.environ["RUNNER_OS"] == "Windows" else "gztar"
+          shutil.make_archive("build/upload/ColosseumStandalone-" + os.environ["PACKAGE_LABEL"],
+                              archive_format, "build/artifact", "ColosseumStandalone")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ColosseumStandalone-${{ matrix.label }}
+          path: build/upload/*
+          if-no-files-found: error
+          compression-level: 0

@@ -103,7 +103,7 @@ add_custom_command(TARGET colosseum_freecam_mod POST_BUILD
         "${CMAKE_CURRENT_SOURCE_DIR}/freecam-runtime.patch"
         "${CMAKE_CURRENT_SOURCE_DIR}/FREECAM.md"
         "$<TARGET_FILE_DIR:colosseum_freecam_mod>")
-if(NOT MSVC)
+if(NOT WIN32)
     target_link_libraries(colosseum_freecam_mod PRIVATE m)
 endif()
 include(CTest)
@@ -113,7 +113,7 @@ if(BUILD_TESTING)
         "${MODERNGEKKO_SOURCE_DIR}/include")
     set_target_properties(colosseum_freecam_test PROPERTIES
         C_STANDARD 11 C_STANDARD_REQUIRED YES)
-    if(NOT MSVC)
+    if(NOT WIN32)
         target_link_libraries(colosseum_freecam_test PRIVATE m)
     endif()
     add_test(NAME colosseum_freecam COMMAND colosseum_freecam_test)
@@ -138,3 +138,31 @@ add_colosseum_feature_mod(
     pokemon-colosseum-minimap
     "Pokemon Colosseum High-Contrast Minimap"
     moderngekko.feature.minimap_high_contrast)
+# Research only: counts GX SDK calls and direct gather-pipe writers by caller
+# (MODERNGEKKO_GX_ATTRIB=<path>). Target list: tools/gx-census/gx_targets.py.
+add_colosseum_patch_mod(
+    colosseum_gx_attrib_mod
+    pokemon-colosseum-gx-attrib
+    "Pokemon Colosseum GX Attribution Census"
+    gx_attrib_mod.c)
+# Research only: the synchronisation contract between the game and the GPU
+# (MODERNGEKKO_GX_SYNC=<path>): interrupts, waits, CP/PE/VI/PI register access.
+add_colosseum_patch_mod(
+    colosseum_gx_sync_mod
+    pokemon-colosseum-gx-sync
+    "Pokemon Colosseum GX Sync Census"
+    gx_sync_mod.c)
+
+# Wes/Rui co-op. Built only on request: it patches moveLeader at 0x8012E7BC,
+# which is that function's address in the co-op DOL. The release DOL has it at
+# 0x8012E7B8 and its heroMoveMain still calls partnerMove, so the patch has
+# nothing to act on there - and the hook list cannot even be generated, because
+# no function starts at that address in the retail table.
+option(COLOSSEUM_COOP_MOD "Build the Wes/Rui co-op mod (needs the co-op DOL)" OFF)
+if(COLOSSEUM_COOP_MOD)
+    add_colosseum_patch_mod(
+        colosseum_coop_mod
+        "pokemon-colosseum-coop"
+        "Pokemon Colosseum Wes/Rui co-op"
+        coop_mod.c)
+endif()

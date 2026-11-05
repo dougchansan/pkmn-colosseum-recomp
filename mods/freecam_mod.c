@@ -240,7 +240,23 @@ static void run_debug_calls(CPUState *s) {
   debug_call_count = 0;
 }
 
-static void on_load(const ModernGekkoModHostApi *host) { api = host; }
+/* Which logical pad drives this machine's camera (0 = whichever pad the
+   hooked read filled, the single-player behaviour). Set per machine from
+   COLO_CAMERA_PAD so two netplay peers can look around independently. */
+static uint32_t camera_pad_id;
+
+static void on_load(const ModernGekkoModHostApi *host) {
+  api = host;
+  // Which player this machine is. Two netplay peers run identical guest
+  // code, so the mod cannot work this out for itself - it has to be told.
+  const char *pad = getenv("COLO_CAMERA_PAD");
+  if (pad && *pad >= '1' && *pad <= '4') {
+    camera_pad_id = (uint32_t)(*pad - '0');
+    fprintf(stderr, "[freecam] camera follows logical pad %u\n",
+            camera_pad_id);
+    fflush(stderr);
+  }
+}
 
 static void set_fov(CPUState *s) {
   const uint32_t degrees = s->gpr[3];
@@ -341,6 +357,29 @@ static void reset_floor(CPUState *s) {
 
 static void skip_boot_movie(CPUState *s); /* see Skip intro below */
 
+#define CAMERA_PAD_TABLE 0x80401C10u
+#define CAMERA_PAD_STRIDE 0x6Cu
+#define CAMERA_PAD_SLOTS 4u
+#define CAMERA_PAD_STATUS 0x24u /* the 12-byte PADStatus GSinputRead latches */
+
+/* The chosen pad's latched status, or NULL to leave the caller's buffer
+   alone. The table is keyed by logical id, not indexed by it, so scan. */
+static const uint8_t *camera_pad_status(CPUState *s) {
+  if (!camera_pad_id)
+    return NULL;
+  for (uint32_t i = 0; i < CAMERA_PAD_SLOTS; ++i) {
+    const uint32_t base = CAMERA_PAD_TABLE + i * CAMERA_PAD_STRIDE;
+    const uint8_t *id = memory(s, base, 4);
+    if (!id)
+      continue;
+    const uint32_t logical = ((uint32_t)id[0] << 24) | ((uint32_t)id[1] << 16) |
+                             ((uint32_t)id[2] << 8) | id[3];
+    if (logical == camera_pad_id)
+      return memory(s, base + CAMERA_PAD_STATUS, 12);
+  }
+  return NULL;
+}
+
 static void pad_entry(CPUState *s) { cam.pad = s->gpr[3]; }
 
 static void pad_return(CPUState *s) {
@@ -366,6 +405,11 @@ static void pad_return(CPUState *s) {
         cam.camera, cam.scope);
   last_buttons = buttons;
 #endif
+  // When this machine owns a specific player, steer from that player's pad
+  // rather than from whichever one the hooked read happened to fill.
+  const uint8_t *chosen = camera_pad_status(s);
+  if (chosen)
+    p = (uint8_t *)chosen;
   if (!p || p[10] != 0) {
     suspend_camera();
     cam.previous = 0;
